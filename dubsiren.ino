@@ -29,10 +29,10 @@ void setup () {
         while (1); // do nothing
     }
 
-    // enable APB bus clock for I2C and TC modules
+    // enable APB bus clock for I2C and TC3 modules
     PM_APBCMASK      = PM_APBCMASK_TC3 | PM_APBCMASK_I2S;
 
-    // set TC1 ti generate 48kHz interrupts
+    // set TC3 to generate 48kHz interrupts
     REG_TC3_CTRLC    = TC_CTRLC_CPTEN0; // enable capture on channel 0 (necessary in MFRQ mode?)
     REG_TC3_INTENSET = TC_CTRLC_MC0;    // enable capture channel 0 interrupt
     REG_TC3_CC0      = 1000;            // set period to 1000 cycles for a 48kHz frequency
