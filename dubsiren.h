@@ -1,19 +1,20 @@
+#include <stdint.h>
+
 #ifndef __DUBSIREN_H
 #define __DUBSIREN_H
 
 #define PIN_LED         32
 #define PIN_PWM         5
 #define PIN_POT         A1
-#define PIN_I2S_BCLK    1
-#define PIN_I2S_WCLK    2
-#define PIN_I2S_DATA    3
+#define PIN_I2S_BCLK    2
+#define PIN_I2S_WCLK    3
+#define PIN_I2S_DATA    A6
 
 #define CLOCK_RATE      48000000
 #define SAMPLE_RATE     48000
 #define OSC_FREQ_MIN    20
 #define OSC_FREQ_MAX    20000
-#define OSC_AMP_MAX     32767 // 16 bit DAC
-#define OSC_BIAS        32768
+#define OSC_AMP_MAX     20000 // 16 bit DAC
 #define LFO_FREQ_MIN    0.1
 #define LFO_FREQ_MAX    10
 
@@ -30,7 +31,7 @@ typedef uint16_t qu16_t; // unsigned fixed point [0 - 1)
 inline qs15_t qu16_to_qs15 (qu16_t x) {return (qs15_t) (x >> 1);}
 inline qs15_t float_to_qs15 (float x) {return (qs15_t) (x * 0x8000);}
 inline qu16_t float_to_qu16 (float x) {return (qu16_t) (x * 0x10000);}
-inline qs15_t qs15_invert (qs15_t x) {return (x ^ 0xfff) + 1;}
+inline qs15_t qs15_invert (qs15_t x) {return (~x) + 1;}
 
 // scale an integer by a qs15 fixed point value
 inline uint16_t mul_qs15_uint16 (qs15_t x , uint16_t y) {
