@@ -5,27 +5,32 @@
 #include "sine.h"
 
 
-volatile waveform_t osc_waveform = SAW;
-volatile int osc_period          = SAMPLE_RATE / 1000; // in samples per period
-volatile qu16_t osc_resolution   = QU16_ONE / osc_period; // sample resolution normalized to number of periods
-volatile qu16_t osc_phase        = 0; // always positive [0 - 1]
-volatile int osc_amplitude       = 5000;
+volatile waveform_t osc_waveform = SINE;
+volatile uint16_t osc_frequency  = 1000;                    // output frequency
+volatile qu32_t osc_step         =                          // phase change per sample
+    osc_frequency * (QU32_ONE / SAMPLE_RATE);
+volatile qu32_t osc_phase        = 0;                       // always positive [0 - 1]
+volatile uint16_t osc_amplitude  = 5000;
+volatile uint16_t osc_setting    = 0;                       // base frequency set by PIN_OSC_POT
+volatile uint16_t mod_frequency  = 0;                       // additive frequency shift from lfo
+
 
 volatile waveform_t lfo_waveform = SINE;
-volatile int lfo_period          = SAMPLE_RATE;
-volatile qu16_t lfo_resolution   = float_to_qu16(1.0 / lfo_period);
-volatile qu16_t lfo_phase        = 0;
-volatile int lfo_amplitude       = 1;
+volatile uint16_t lfo_frequency  = 1;                    // output frequency
+volatile uint32_t lfo_period     = SAMPLE_RATE * 2;
+volatile qu32_t lfo_step         = QU16_ONE / lfo_period;
+volatile qu32_t lfo_phase        = 0;
+volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;
+volatile uint16_t sample         = 0;                       // buffer one sample to handle interrupts quickly
 
-volatile bool led_state          = true;
-volatile bool pwm_state          = true;
-
-int led_t0                       = 0;
-volatile uint16_t sample         = 0;
+uint32_t led_t0                  = 0;
+bool led_state                   = true;
+bool pwm_state                   = true;
+uint16_t osc_reading             = 0;
 
 
 void setup () {
-    // pinMode(PIN_PWM, OUTPUT);
+    pinMode(PIN_PWM, OUTPUT);
     pinMode(PIN_LED, OUTPUT);
     pinMode(PIN_I2S_BCLK, OUTPUT);
     pinMode(PIN_I2S_WCLK, OUTPUT);
@@ -45,10 +50,12 @@ void setup () {
 void loop () {
 
     // read frequency pot
-    int osc_reading = readAdc();
-    int osc_frequency = map(osc_reading, 0, 1024, OSC_FREQ_MIN, OSC_FREQ_MAX);
-    osc_period = SAMPLE_RATE / osc_frequency;
-    osc_resolution = QU16_ONE / osc_period;
+    int new_osc_reading = readAdc();
+    if (abs(osc_reading - new_osc_reading) > 2) {
+        osc_frequency = int(map(new_osc_reading, 0, 1024, OSC_FREQ_MIN, OSC_FREQ_MAX));
+        osc_step = osc_frequency * (QU32_ONE / SAMPLE_RATE);
+        osc_reading = new_osc_reading;
+    }
 
     // blink led at 2 Hz
     int t = millis();
@@ -57,7 +64,7 @@ void loop () {
         led_state = !led_state;
         led_t0 = t;
 
-        //Serial.println(osc_reading);
+        Serial.println(I2S->SERCTRL[0].reg, HEX);
     }
 }
 
@@ -92,7 +99,7 @@ void setupAdc () {
     ADC->INPUTCTRL.bit.MUXNEG = 0x18;           // ADC- to internal ground
     ADC->INPUTCTRL.bit.MUXPOS = 0x0A;           // ADC+ to AN10
     ADC->AVGCTRL.bit.SAMPLENUM = 7;             // 128 samples
-    ADC->AVGCTRL.bit.ADJRES = 7;
+    ADC->AVGCTRL.bit.ADJRES = 6;
     ADC->SAMPCTRL.bit.SAMPLEN = 0x3f;
 
     ADC->CTRLA.bit.ENABLE = 1;
@@ -131,8 +138,8 @@ void setupI2S() {
     I2S->CLKCTRL[0].bit.SLOTSIZE = 1;           // 16 bit
 
     // setup serial unit 0
-    I2S->SERCTRL[0].bit.MONO = 1;
-    I2S->SERCTRL[0].bit.DATASIZE = 4;           // 16 bit
+    // I2S->SERCTRL[0].bit.MONO = 1; // this still generates a TXRDY0 for both samples
+    I2S->SERCTRL[0].bit.DATASIZE = 5;           // 16 bit compact stereo
     I2S->SERCTRL[0].bit.SLOTADJ = 1;            // left justified
     I2S->SERCTRL[0].bit.SERMODE = 1;            // tx mode
     I2S->SERCTRL[0].bit.TXSAME = 1;             // repeat last word on underflow
@@ -151,14 +158,14 @@ void setupI2S() {
 
 
 // return the amplitude in [-1 - 1]
-qs15_t inline getAmplitude(waveform_t waveform, qu16_t phase) {
+qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
     switch (waveform) {
         case SQUARE:
             //return (phase < QU16_ONE / 4) ? QS15_ONE : QS15_MINUS_ONE;
 
-            if (phase < QU16_ONE / 4) {
-                return qu16_to_qs15(QU16_ONE);
+            if (phase < QU32_ONE / 2) {
+                return QS15_ONE;
             } else {
                 return QS15_MINUS_ONE;
             }
@@ -166,27 +173,29 @@ qs15_t inline getAmplitude(waveform_t waveform, qu16_t phase) {
         // the phase to amplitude ratio has a gain of two. Because of the fixed point limits of
         // [-1, 1) a multiplication could overflow. Therefore the phase is just subtracted twice.
         case SAW:
-           return QS15_ONE - qu16_to_qs15(phase) - qu16_to_qs15(phase);
+           return QS15_ONE - qu32_to_qs15(phase) - qu32_to_qs15(phase);
            // return qu16_to_qs15(phase);
 
         case TRIANGLE:
             qs15_t local_phase;
-            if (phase < QU16_ONE / 2) {
-                local_phase = qu16_to_qs15(phase) << 2; // [0 - 0.5] -> [0 - 1]
+            if (phase < QU32_ONE / 2) {
+                digitalWrite(PIN_PWM, HIGH);
+                local_phase = qu32_to_qs15(phase) << 2; // [0 - 0.5] -> [0 - 1]
                 return QS15_MINUS_ONE + local_phase;
             } else {
-                local_phase = (qu16_to_qs15(phase) - (QS15_ONE >> 2)) << 2; // [0.5 - 1] -> [0 - 1]
-                return QS15_ONE - local_phase;
+                digitalWrite(PIN_PWM, LOW);
+                local_phase = (qu32_to_qs15(phase) - (QS15_ONE >> 2)) << 2; // [0.5 - 1] -> [0 - 1]
+                return -local_phase;
             }
 
         case SINE:
             // TODO: interpolation
-            uint16_t index = mul_qu16_uint16(phase, SINE_SAMPLES * 4) & (SINE_SAMPLES - 1);
-            if (phase < QU16_ONE / 4) {
+            uint16_t index = mul_qu32_uint16(phase, SINE_SAMPLES * 4) & (SINE_SAMPLES - 1);
+            if (phase < QU32_ONE / 4) {
                 return SINE_TABLE[index];
-            } else if (phase < QU16_ONE / 2) {
+            } else if (phase < QU32_ONE / 2) {
                 return SINE_TABLE[SINE_SAMPLES - index - 1];
-            } else if (phase < QU16_ONE * 3 / 4) {
+            } else if (phase < QU32_ONE / 4 * 3) {
                 return qs15_invert(SINE_TABLE[index]);
             } else {
                 return qs15_invert(SINE_TABLE[SINE_SAMPLES - index - 1]);
@@ -196,32 +205,29 @@ qs15_t inline getAmplitude(waveform_t waveform, qu16_t phase) {
 
 
 void I2S_Handler() {
+    // this routine is called twice for every sample because mono mode does not
 
     // write sample, interrupt flag is cleared automatically
-    I2S->DATA[0].reg = sample;
+    I2S->DATA[0].reg = sample << 16 | sample;
+
+    // if (osc_phase + osc_step < osc_phase) {
+    // digitalWrite(PIN_PWM, pwm_state);
+    // pwm_state = !pwm_state;
+    // }
 
     // update oscillator and lfo phase. these overflow naturally
-    osc_phase += osc_resolution;
-    lfo_phase += lfo_resolution;
+    osc_phase += osc_step;
+    lfo_phase += lfo_step;
+
+    // get lfo value
+    // qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
+
+    // // modulate osc frequency with scaled lfo value
+    // mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_setting);
+    // osc_frequency = osc_setting + mod_frequency;
+    // osc_period = SAMPLE_RATE / osc_frequency;
+    // osc_step = QU16_ONE / osc_period;
 
     // get oscillator value
     sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
-}
-
-
-void TC3_Handler() {
-
-    // clear interrupt flag
-    TC3->COUNT16.INTFLAG.bit.MC0 = 1;
-
-    uint16_t sample;
-
-    // update oscillator and lfo phase. these overflow naturally
-    osc_phase += osc_resolution;
-    lfo_phase += lfo_resolution;
-
-    /// get oscillator value
-    sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
-
-    // I2S->DATA[0].reg = sample;
 }
