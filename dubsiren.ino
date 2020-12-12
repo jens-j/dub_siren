@@ -5,9 +5,9 @@
 #include "sine.h"
 
 
-volatile waveform_t osc_waveform = SINE;
+volatile waveform_t osc_waveform = SAW;
 volatile int osc_period          = SAMPLE_RATE / 1000; // in samples per period
-volatile qu16_t osc_resolution   = float_to_qu16(1.0 / osc_period); // sample resolution normalized to number of periods
+volatile qu16_t osc_resolution   = QU16_ONE / osc_period; // sample resolution normalized to number of periods
 volatile qu16_t osc_phase        = 0; // always positive [0 - 1]
 volatile int osc_amplitude       = 5000;
 
@@ -20,6 +20,7 @@ volatile int lfo_amplitude       = 1;
 volatile bool led_state          = true;
 volatile bool pwm_state          = true;
 
+int led_t0                       = 0;
 volatile uint16_t sample         = 0;
 
 
@@ -34,35 +35,82 @@ void setup () {
     //while (!Serial); // wait for a serial connection (terminal)
     //I2S.begin(I2S_PHILIPS_MODE, SAMPLE_RATE, 16);e
 
+    setupAdc();
     setupI2S();
-    //setupTC3();
 
+    Serial.println(GCLK->CLKCTRL.reg);
     Serial.println("Initialization completed");
 }
 
 void loop () {
-    // Serial.println("tik");
-    Serial.println(I2S->SERCTRL[0].reg, HEX);
-    digitalWrite(PIN_LED, led_state);
-    led_state = !led_state;
-    delay(1000);
+
+    // read frequency pot
+    int osc_reading = readAdc();
+    int osc_frequency = map(osc_reading, 0, 1024, OSC_FREQ_MIN, OSC_FREQ_MAX);
+    osc_period = SAMPLE_RATE / osc_frequency;
+    osc_resolution = QU16_ONE / osc_period;
+
+    // blink led at 2 Hz
+    int t = millis();
+    if (t - led_t0 > 1000) {
+        digitalWrite(PIN_LED, led_state);
+        led_state = !led_state;
+        led_t0 = t;
+
+        //Serial.println(osc_reading);
+    }
+}
+
+inline uint16_t readAdc () {
+    ADC->SWTRIG.bit.START = 1;
+    while (!ADC->INTFLAG.bit.RESRDY);
+    return ADC->RESULT.reg;
+}
+
+void setupAdc () {
+    //ADC->CTRLA.bit.ENABLE = 0;
+
+    // setup the clock for the ADC peripheral
+    // GCLK->GENDIV.bit.ID = 4;                    // select generator 4
+    // GCLK->GENDIV.bit.DIV = 64;                  // c
+    // GCLK->GENCTRL.bit.ID = 4;                   // select generator 4
+    // GCLK->GENCTRL.bit.SRC = 7;                  // FDPLL48M
+    // GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
+    // GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
+    GCLK->CLKCTRL.bit.ID = 0x1e;                // select clock GCLK_ADC
+    GCLK->CLKCTRL.bit.GEN = 3;                  // clock generator 4
+    GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
+
+    PORT->Group[1].PINCFG[2].bit.PMUXEN = 1;    // mux ADC on PB02 / pin A1
+    PORT->Group[1].PMUX[1].bit.PMUXE = 1;       // select AN10 (group B) for in PB02
+
+    ADC->CTRLA.bit.ENABLE = 0;                  // disable peripheral before starting clock
+    PM->APBCMASK.bit.ADC_ = 1;                  // start APBC clock
+
+    ADC->CTRLB.bit.PRESCALER = 0;               // 4
+    ADC->CTRLB.bit.RESSEL = 1;                  // 16 bit
+    ADC->INPUTCTRL.bit.MUXNEG = 0x18;           // ADC- to internal ground
+    ADC->INPUTCTRL.bit.MUXPOS = 0x0A;           // ADC+ to AN10
+    ADC->AVGCTRL.bit.SAMPLENUM = 7;             // 128 samples
+    ADC->AVGCTRL.bit.ADJRES = 7;
+    ADC->SAMPCTRL.bit.SAMPLEN = 0x3f;
+
+    ADC->CTRLA.bit.ENABLE = 1;
 }
 
 void setupI2S() {
     // set the I2S module to 48 kHz tx 16-bit mono mode
 
     // setup the clock for the I2S peripheral
-    GCLK->GENDIV.bit.ID = 3;                    // select generator 0
-    GCLK->GENDIV.bit.DIV = 62;                  // clock divider 96 MHz / 125 / 16 = 48 kHz
-    GCLK->GENCTRL.bit.ID = 3;                   // select generator 0
+    GCLK->GENDIV.bit.ID = 3;                    // select generator 3
+    GCLK->GENDIV.bit.DIV = 31;                  // clock divider 48 MHz / 31 / 16 / 2 = 48.387 kHz
+    GCLK->GENCTRL.bit.ID = 3;                   // select generator 3
     GCLK->GENCTRL.bit.SRC = 7;                  // FDPLL48M
     GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
     GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
     GCLK->CLKCTRL.bit.ID = 0x23;                // select clock GCLK_I2S_0
-    GCLK->CLKCTRL.bit.GEN = 3;                  // clock generator 0
+    GCLK->CLKCTRL.bit.GEN = 3;                  // clock generator 3
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
-
-    PM->APBCMASK.bit.I2S_ = 1;
 
     // enable peripheral mux
     PORT->Group[0].PINCFG[7].bit.PMUXEN = 1;
@@ -73,10 +121,6 @@ void setupI2S() {
     PORT->Group[0].PMUX[3].bit.PMUXO = 6;       // data -> PA7
     PORT->Group[0].PMUX[5].bit.PMUXE = 6;       // sclk -> PA10
     PORT->Group[0].PMUX[5].bit.PMUXO = 6;       // wclk -> PA11
-
-    pinPeripheral(PIN_I2S_BCLK, PIO_COM);
-    pinPeripheral(PIN_I2S_WCLK, PIO_COM);
-    pinPeripheral(PIN_I2S_DATA, PIO_COM);
 
     I2S->CTRLA.bit.ENABLE = 0;                  // disable peripheral before starting clock
     PM->APBCMASK.bit.I2S_ = 1;                  // start APBC clock
@@ -91,6 +135,7 @@ void setupI2S() {
     I2S->SERCTRL[0].bit.DATASIZE = 4;           // 16 bit
     I2S->SERCTRL[0].bit.SLOTADJ = 1;            // left justified
     I2S->SERCTRL[0].bit.SERMODE = 1;            // tx mode
+    I2S->SERCTRL[0].bit.TXSAME = 1;             // repeat last word on underflow
 
     I2S->INTENSET.bit.TXRDY0 = 1;               // enable tx ready interrupt
 

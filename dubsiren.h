@@ -5,7 +5,8 @@
 
 #define PIN_LED         32
 #define PIN_PWM         5
-#define PIN_POT         A1
+#define PIN_OSC_POT     A1
+#define PIN_LFO_POT     A2
 #define PIN_I2S_BCLK    2
 #define PIN_I2S_WCLK    3
 #define PIN_I2S_DATA    A6
@@ -13,8 +14,8 @@
 #define CLOCK_RATE      48000000
 #define SAMPLE_RATE     48000
 #define OSC_FREQ_MIN    20
-#define OSC_FREQ_MAX    20000
-#define OSC_AMP_MAX     20000 // 16 bit DAC
+#define OSC_FREQ_MAX    10000
+#define OSC_AMP_MAX     32767 // 16 bit signed
 #define LFO_FREQ_MIN    0.1
 #define LFO_FREQ_MAX    10
 
