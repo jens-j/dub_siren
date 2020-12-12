@@ -5,23 +5,22 @@
 #include "sine.h"
 
 
-volatile waveform_t osc_waveform = SINE;
-volatile uint16_t osc_frequency  = 1000;                    // output frequency
-volatile qu32_t osc_step         =                          // phase change per sample
+volatile waveform_t osc_waveform = TRIANGLE;
+volatile uint16_t osc_frequency  = 1000;                // output frequency
+volatile qu32_t osc_step         =                      // phase change per sample
     osc_frequency * (QU32_ONE / SAMPLE_RATE);
-volatile qu32_t osc_phase        = 0;                       // always positive [0 - 1]
+volatile qu32_t osc_phase        = 0;                   // always positive [0 - 1]
 volatile uint16_t osc_amplitude  = 5000;
-volatile uint16_t osc_setting    = 0;                       // base frequency set by PIN_OSC_POT
-volatile uint16_t mod_frequency  = 0;                       // additive frequency shift from lfo
+volatile uint16_t osc_setting    = 0;                   // base frequency set by PIN_OSC_POT
+volatile uint16_t mod_frequency  = 0;                   // additive frequency shift from lfo
 
-
-volatile waveform_t lfo_waveform = SINE;
-volatile uint16_t lfo_frequency  = 1;                    // output frequency
-volatile uint32_t lfo_period     = SAMPLE_RATE * 2;
-volatile qu32_t lfo_step         = QU16_ONE / lfo_period;
+volatile waveform_t lfo_waveform = SAW;
+volatile uint16_t lfo_frequency  = 1;
+volatile qu32_t lfo_step         =                      // phase change per sample
+    lfo_frequency * (QU32_ONE / SAMPLE_RATE);
 volatile qu32_t lfo_phase        = 0;
-volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;
-volatile uint16_t sample         = 0;                       // buffer one sample to handle interrupts quickly
+volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;       // mod osc frequency by 10%
+volatile uint16_t sample         = 0;                   // buffer one sample to handle interrupts quickly
 
 uint32_t led_t0                  = 0;
 bool led_state                   = true;
@@ -47,26 +46,6 @@ void setup () {
     Serial.println("Initialization completed");
 }
 
-void loop () {
-
-    // read frequency pot
-    int new_osc_reading = readAdc();
-    if (abs(osc_reading - new_osc_reading) > 2) {
-        osc_frequency = int(map(new_osc_reading, 0, 1024, OSC_FREQ_MIN, OSC_FREQ_MAX));
-        osc_step = osc_frequency * (QU32_ONE / SAMPLE_RATE);
-        osc_reading = new_osc_reading;
-    }
-
-    // blink led at 2 Hz
-    int t = millis();
-    if (t - led_t0 > 1000) {
-        digitalWrite(PIN_LED, led_state);
-        led_state = !led_state;
-        led_t0 = t;
-
-        Serial.println(I2S->SERCTRL[0].reg, HEX);
-    }
-}
 
 inline uint16_t readAdc () {
     ADC->SWTRIG.bit.START = 1;
@@ -179,11 +158,9 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
         case TRIANGLE:
             qs15_t local_phase;
             if (phase < QU32_ONE / 2) {
-                digitalWrite(PIN_PWM, HIGH);
                 local_phase = qu32_to_qs15(phase) << 2; // [0 - 0.5] -> [0 - 1]
                 return QS15_MINUS_ONE + local_phase;
             } else {
-                digitalWrite(PIN_PWM, LOW);
                 local_phase = (qu32_to_qs15(phase) - (QS15_ONE >> 2)) << 2; // [0.5 - 1] -> [0 - 1]
                 return -local_phase;
             }
@@ -205,29 +182,47 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
 
 void I2S_Handler() {
-    // this routine is called twice for every sample because mono mode does not
-
-    // write sample, interrupt flag is cleared automatically
+    // write sample in compact stereo mode, interrupt flag is cleared automatically
     I2S->DATA[0].reg = sample << 16 | sample;
 
-    // if (osc_phase + osc_step < osc_phase) {
-    // digitalWrite(PIN_PWM, pwm_state);
-    // pwm_state = !pwm_state;
-    // }
+    if (lfo_phase + lfo_step < lfo_phase) {
+        digitalWrite(PIN_PWM, pwm_state);
+        pwm_state = !pwm_state;
+    }
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
     lfo_phase += lfo_step;
 
     // get lfo value
-    // qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
+    qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
 
-    // // modulate osc frequency with scaled lfo value
-    // mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_setting);
-    // osc_frequency = osc_setting + mod_frequency;
-    // osc_period = SAMPLE_RATE / osc_frequency;
-    // osc_step = QU16_ONE / osc_period;
+    // modulate osc frequency with scaled lfo value
+    mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_setting);
+    osc_frequency = osc_setting + mod_frequency;
+    osc_step = osc_frequency * STEP_COEFF;
 
     // get oscillator value
     sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
+}
+
+void loop () {
+
+    // read frequency pot
+    int new_osc_reading = readAdc();
+    if (abs(osc_reading - new_osc_reading) > 2) {
+        osc_setting = int(map(new_osc_reading, 0, 1024, OSC_FREQ_MIN, OSC_FREQ_MAX));
+        osc_reading = new_osc_reading;
+    }
+
+    // blink led at 2 Hz
+    int t = millis();
+    if (t - led_t0 > MAIN_LOOP_MS) {
+        digitalWrite(PIN_LED, led_state);
+        led_state = !led_state;
+        led_t0 += MAIN_LOOP_MS;
+
+        qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
+        Serial.println(mod_frequency);
+    }
 }

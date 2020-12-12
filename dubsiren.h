@@ -11,6 +11,7 @@
 #define PIN_I2S_WCLK    3
 #define PIN_I2S_DATA    A6
 
+#define MAIN_LOOP_MS    894
 #define CLOCK_RATE      48000000
 #define SAMPLE_RATE     48000
 #define OSC_FREQ_MIN    100
@@ -19,16 +20,19 @@
 #define LFO_FREQ_MIN    0.1
 #define LFO_FREQ_MAX    10
 
-#define QU32_ONE        0xffffffff
+#define QU32_ONE        0xffffffffUL
 #define QU16_ONE        0xffff
 #define QS15_ONE        0x7fff
 #define QS15_MINUS_ONE  0x8000
+
+#define STEP_COEFF      (QU32_ONE / SAMPLE_RATE)
 
 
 
 enum waveform_t {SQUARE, SAW, TRIANGLE, SINE};
 
 typedef uint16_t qs15_t; // signed fixed point [-1 - 1)
+typedef uint16_t qu12_t;  // unsigned 4.12 fixed point
 typedef uint16_t qu16_t; // unsigned fixed point [0 - 1)
 typedef uint32_t qu32_t; // unsigned fixed point [0 - 1)
 
@@ -42,8 +46,12 @@ inline qs15_t qs15_invert (qs15_t x) {return (~x) + 1;}
 
 // multiply two qs15_t values
 inline qs15_t mul_qs15 (qs15_t x, qs15_t y) {
+
+    uint32_t temp_x = (uint32_t) x;
+    temp_x |= 0xffff0000 * (temp_x >> 15);
+
     // multiply and normalize
-    return (uint16_t) (((uint32_t) x * y) >> 15);
+    return (uint16_t) (((uint32_t) temp_x * y) >> 15);
 }
 
 // scale an int by a signed coefficient
