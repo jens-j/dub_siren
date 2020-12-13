@@ -5,27 +5,31 @@
 #include "sine.h"
 
 
-volatile waveform_t osc_waveform = TRIANGLE;
-volatile uint16_t osc_frequency  = 1000;                // output frequency
-volatile qu32_t osc_step         =                      // phase change per sample
-    osc_frequency * (QU32_ONE / SAMPLE_RATE);
-volatile qu32_t osc_phase        = 0;                   // always positive [0 - 1]
-volatile uint16_t osc_amplitude  = 5000;
-volatile uint16_t osc_setting    = 0;                   // base frequency set by PIN_OSC_POT
-volatile uint16_t mod_frequency  = 0;                   // additive frequency shift from lfo
+volatile waveform_t osc_waveform = SQUARE;
+volatile uint16_t osc_frequency  = 1000;                        // output frequency
+volatile qu32_t osc_step         = osc_frequency * STEP_COEFF; // phase change per sample
 
-volatile waveform_t lfo_waveform = SAW;
-volatile uint16_t lfo_frequency  = 1;
-volatile qu32_t lfo_step         =                      // phase change per sample
-    lfo_frequency * (QU32_ONE / SAMPLE_RATE);
+volatile qu32_t osc_phase        = 0;                           // always positive [0 - 1]
+volatile uint16_t osc_amplitude  = 5000;
+volatile uint16_t osc_setting    = 0;                           // base frequency set by PIN_OSC_POT
+volatile uint16_t mod_frequency  = 0;                           // additive frequency shift from lfo
+
+volatile waveform_t lfo_waveform = SINE;
+// volatile uint16_t lfo_frequency  = 1;
+// volatile qu32_t lfo_step         = lfo_frequency * STEP_COEFF; // phase change per sample
+volatile qu8_t lfo_frequency     = float_to_qu8(2);
+volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, STEP_COEFF); // phase change per sample
+
 volatile qu32_t lfo_phase        = 0;
-volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;       // mod osc frequency by 10%
-volatile uint16_t sample         = 0;                   // buffer one sample to handle interrupts quickly
+volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;               // mod osc frequency by 10%
+volatile uint16_t sample         = 0;                           // buffer one sample to handle interrupts quickly
+volatile bool btn_state          = false;
 
 uint32_t led_t0                  = 0;
 bool led_state                   = true;
 bool pwm_state                   = true;
 uint16_t osc_reading             = 0;
+uint16_t lfo_reading             = 0;
 
 
 void setup () {
@@ -37,7 +41,6 @@ void setup () {
 
     Serial.begin(115200);
     //while (!Serial); // wait for a serial connection (terminal)
-    //I2S.begin(I2S_PHILIPS_MODE, SAMPLE_RATE, 16);e
 
     setupAdc();
     setupI2S();
@@ -47,28 +50,24 @@ void setup () {
 }
 
 
-inline uint16_t readAdc () {
+inline uint16_t readAdc (int channel) {
+
+    ADC->INPUTCTRL.bit.MUXPOS = channel;         // ADC+ to channel ANx
     ADC->SWTRIG.bit.START = 1;
     while (!ADC->INTFLAG.bit.RESRDY);
     return ADC->RESULT.reg;
 }
 
 void setupAdc () {
-    //ADC->CTRLA.bit.ENABLE = 0;
 
-    // setup the clock for the ADC peripheral
-    // GCLK->GENDIV.bit.ID = 4;                    // select generator 4
-    // GCLK->GENDIV.bit.DIV = 64;                  // c
-    // GCLK->GENCTRL.bit.ID = 4;                   // select generator 4
-    // GCLK->GENCTRL.bit.SRC = 7;                  // FDPLL48M
-    // GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
-    // GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
     GCLK->CLKCTRL.bit.ID = 0x1e;                // select clock GCLK_ADC
     GCLK->CLKCTRL.bit.GEN = 3;                  // clock generator 4
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
 
     PORT->Group[1].PINCFG[2].bit.PMUXEN = 1;    // mux ADC on PB02 / pin A1
-    PORT->Group[1].PMUX[1].bit.PMUXE = 1;       // select AN10 (group B) for in PB02
+    PORT->Group[0].PINCFG[4].bit.PMUXEN = 1;    // mux ADC on PA04 / pin A3
+    PORT->Group[1].PMUX[1].bit.PMUXE = 1;       // select AN10 (group B) for PB02
+    PORT->Group[0].PMUX[2].bit.PMUXE = 1;       // select AN04 (group B) for PA04
 
     ADC->CTRLA.bit.ENABLE = 0;                  // disable peripheral before starting clock
     PM->APBCMASK.bit.ADC_ = 1;                  // start APBC clock
@@ -76,7 +75,6 @@ void setupAdc () {
     ADC->CTRLB.bit.PRESCALER = 0;               // 4
     ADC->CTRLB.bit.RESSEL = 1;                  // 16 bit
     ADC->INPUTCTRL.bit.MUXNEG = 0x18;           // ADC- to internal ground
-    ADC->INPUTCTRL.bit.MUXPOS = 0x0A;           // ADC+ to AN10
     ADC->AVGCTRL.bit.SAMPLENUM = 7;             // 128 samples
     ADC->AVGCTRL.bit.ADJRES = 6;
     ADC->SAMPCTRL.bit.SAMPLEN = 0x3f;
@@ -142,7 +140,6 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
     switch (waveform) {
         case SQUARE:
             //return (phase < QU16_ONE / 4) ? QS15_ONE : QS15_MINUS_ONE;
-
             if (phase < QU32_ONE / 2) {
                 return QS15_ONE;
             } else {
@@ -158,11 +155,11 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
         case TRIANGLE:
             qs15_t local_phase;
             if (phase < QU32_ONE / 2) {
-                local_phase = qu32_to_qs15(phase) << 2; // [0 - 0.5] -> [0 - 1]
-                return QS15_MINUS_ONE + local_phase;
+                local_phase = qu32_to_qs15(phase);
+                return QS15_MINUS_ONE + (local_phase << 2);
             } else {
-                local_phase = (qu32_to_qs15(phase) - (QS15_ONE >> 2)) << 2; // [0.5 - 1] -> [0 - 1]
-                return -local_phase;
+                local_phase = (qu32_to_qs15(phase) - (QS15_ONE >> 2)); // [0.5 - 1] -> [0 - 1]
+                return QS15_ONE - (local_phase << 2);
             }
 
         case SINE:
@@ -182,13 +179,20 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
 
 void I2S_Handler() {
-    // write sample in compact stereo mode, interrupt flag is cleared automatically
-    I2S->DATA[0].reg = sample << 16 | sample;
 
-    if (lfo_phase + lfo_step < lfo_phase) {
+    // write sample in compact stereo mode, interrupt flag is cleared automatically
+    I2S->DATA[0].reg = btn_state ? (uint32_t) sample << 16 | sample : 0UL;
+
+    if (I2S->INTFLAG.bit.TXUR0 == 1) {
+        I2S->INTFLAG.bit.TXUR0 = 1;
         digitalWrite(PIN_PWM, pwm_state);
         pwm_state = !pwm_state;
     }
+
+    // if (lfo_phase + lfo_step < lfo_phase) {
+    //     digitalWrite(PIN_PWM, pwm_state);
+    //     pwm_state = !pwm_state;
+    // }
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
@@ -208,11 +212,23 @@ void I2S_Handler() {
 
 void loop () {
 
+    // read button
+    btn_state = !((bool) digitalRead(PIN_BTN));
+
     // read frequency pot
-    int new_osc_reading = readAdc();
+    int new_osc_reading = readAdc(ADC_CH_OSC);
     if (abs(osc_reading - new_osc_reading) > 2) {
-        osc_setting = int(map(new_osc_reading, 0, 1024, OSC_FREQ_MIN, OSC_FREQ_MAX));
         osc_reading = new_osc_reading;
+        osc_setting = int(map(osc_reading, 0, 1024, OSC_FREQ_MIN, OSC_FREQ_MAX));
+        // osc_step = osc_setting * STEP_COEFF;
+    }
+
+    // read lfo pot
+    int new_lfo_reading = readAdc(ADC_CH_LFO);
+    if (abs(lfo_reading - new_lfo_reading) > 2) {
+        lfo_reading = new_lfo_reading;
+        lfo_frequency = float_to_qu8(map(lfo_reading, 0, 1024, LFO_FREQ_MIN, LFO_FREQ_MAX));
+        lfo_step = mul_qu8_uint32(lfo_frequency, STEP_COEFF);
     }
 
     // blink led at 2 Hz
@@ -222,7 +238,6 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
-        Serial.println(mod_frequency);
+        //Serial.println(timer);
     }
 }
