@@ -15,21 +15,22 @@
 #define ADC_CH_OSC      0xA
 #define ADC_CH_LFO      0x4
 
-#define MAIN_LOOP_MS    894
 #define CLOCK_RATE      48000000UL
+#define MAIN_LOOP_MS    894
+#define ADC_RES         1024
 #define SAMPLE_RATE     48000UL
 #define OSC_FREQ_MIN    100
 #define OSC_FREQ_MAX    10000
+#define OSC_FREQ_RANGE  (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX     32767 // 16 bit signed
 #define LFO_FREQ_MIN    0.1
 #define LFO_FREQ_MAX    10
+#define LFO_FREQ_RANGE  (LFO_FREQ_MAX - LFO_FREQ_MIN)
 
 #define QU32_ONE        0xffffffffUL
 #define QU16_ONE        0x0000ffffUL
 #define QS15_ONE        0x00007fffUL
 #define QS15_MINUS_ONE  0xffff8000UL
-
-#define STEP_COEFF      (QU32_ONE / SAMPLE_RATE)
 
 
 
