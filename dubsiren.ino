@@ -6,21 +6,20 @@
 
 
 volatile waveform_t osc_waveform = SAW;
-volatile uint16_t osc_frequency  = 1000;                        // output frequency
-volatile qu32_t osc_step         = osc_frequency * (QU32_ONE / SAMPLE_RATE); // phase change per sample
-
-volatile qu32_t osc_phase        = 0;                           // always positive [0 - 1]
+volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile uint16_t osc_amplitude  = 5000;
-volatile uint16_t osc_setting    = 0;                           // base frequency set by PIN_OSC_POT
-volatile uint16_t mod_frequency  = 0;                           // additive frequency shift from lfo
+volatile uint16_t osc_setpoint   = 1000;             // base frequency setpoint, set by PIN_OSC_POT
+volatile uint16_t osc_frequency  = osc_setpoint;     // base frequency current value
+volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
+volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
-volatile waveform_t lfo_waveform = SINE;
+volatile waveform_t lfo_waveform = SQUARE;
 volatile qu8_t lfo_frequency     = float_to_qu8(2);
 volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
 
 volatile qu32_t lfo_phase        = 0;
-volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;               // mod osc frequency by 10%
-volatile uint16_t sample         = 0;                           // buffer one sample to handle interrupts quickly
+volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;    // mod osc frequency by 10%
+volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
 volatile bool btn_state          = false;
 
 uint32_t led_t0                  = 0;
@@ -188,6 +187,14 @@ void I2S_Handler() {
         pwm_state = !pwm_state;
     }
 
+    // // update oscillator frequency (glide)
+    // int osc_frequency_diff = osc_setpoint - osc_frequency;
+    // if (osc_frequency_diff > 0) {
+    //     osc_frequency += min(osc_frequency_diff, GLIDE_RATE);
+    // } else if (osc_frequency_diff < 0) {
+    //     osc_frequency -= min(-osc_frequency_diff, GLIDE_RATE);
+    // }
+
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
     lfo_phase += lfo_step;
@@ -196,9 +203,8 @@ void I2S_Handler() {
     qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
 
     // modulate osc frequency with scaled lfo value
-    mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_setting);
-    osc_frequency = osc_setting + mod_frequency;
-    osc_step = osc_frequency * (QU32_ONE / SAMPLE_RATE);
+    mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_frequency);
+    osc_step = (uint16_t) (osc_frequency + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // get oscillator value
     sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
@@ -206,8 +212,9 @@ void I2S_Handler() {
 
 void loop () {
 
+    char stringBuffer[100];
+
     // read button
-    //btn_state = !((bool) digitalRead(PIN_BTN));
     if (digitalRead(PIN_BTN)) {
         btn_state = false;
     } else {
@@ -222,14 +229,13 @@ void loop () {
         osc_reading = new_osc_reading;
         float norm_osc_reading = (float) new_osc_reading / ADC_RES;
         norm_osc_reading *= norm_osc_reading; // turn the frequency scale quadratic
-        osc_setting = uint16_t(norm_osc_reading * OSC_FREQ_RANGE) + OSC_FREQ_MIN;
+        osc_frequency = uint16_t(norm_osc_reading * OSC_FREQ_RANGE) + OSC_FREQ_MIN;
     }
 
     // read lfo pot
     int new_lfo_reading = readAdc(ADC_CH_LFO);
     if (abs(lfo_reading - new_lfo_reading) > 2) {
         lfo_reading = new_lfo_reading;
-        //lfo_frequency = float_to_qu8(map(lfo_reading, 0, ADC_RES, LFO_FREQ_MIN, LFO_FREQ_MAX));
         lfo_frequency = float_to_qu8((float) lfo_reading / ADC_RES * LFO_FREQ_RANGE + LFO_FREQ_MIN);
         lfo_step = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE);
     }
@@ -241,6 +247,8 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        // Serial.println(mod_frequency);
+        // sprintf(stringBuffer, "%d, %d, %d",
+        //     osc_frequency, mod_frequency, (uint16_t) (osc_frequency + mod_frequency));
+        Serial.println(osc_reading);
     }
 }

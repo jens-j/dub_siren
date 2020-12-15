@@ -16,22 +16,24 @@
 #define ADC_CH_LFO      0x4
 
 #define CLOCK_RATE      48000000UL
-#define MAIN_LOOP_MS    894
+#define MAIN_LOOP_MS    200
 #define ADC_RES         1024
 #define SAMPLE_RATE     48000UL
+
 #define OSC_FREQ_MIN    100
 #define OSC_FREQ_MAX    10000
 #define OSC_FREQ_RANGE  (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX     32767 // 16 bit signed
+#define GLIDE_RATE      1 // frequency change rate in Hz/sample
+
 #define LFO_FREQ_MIN    0.1
-#define LFO_FREQ_MAX    10
+#define LFO_FREQ_MAX    10.0
 #define LFO_FREQ_RANGE  (LFO_FREQ_MAX - LFO_FREQ_MIN)
 
 #define QU32_ONE        0xffffffffUL
 #define QU16_ONE        0x0000ffffUL
 #define QS15_ONE        0x00007fffUL
 #define QS15_MINUS_ONE  0xffff8000UL
-
 
 
 enum waveform_t {SQUARE, SAW, TRIANGLE, SINE};
@@ -47,6 +49,7 @@ inline qs15_t qu16_to_qs15 (qu16_t x) {return (qs15_t) (x >> 1);}
 inline qs15_t float_to_qu8 (float x) {return (qu8_t) (x * 0x100);}
 inline qs15_t float_to_qs15 (float x) {return (qs15_t) (x * 0x8000);}
 inline qu16_t float_to_qu16 (float x) {return (qu16_t) (x * 0x10000);}
+inline qu16_t float_to_qu32 (float x) {return (qu16_t) (x * 0x100000000);}
 inline qs15_t qs15_invert (qs15_t x) {return (~x) + 1;}
 
 
