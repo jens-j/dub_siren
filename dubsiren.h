@@ -25,7 +25,7 @@
 #define OSC_FREQ_MAX    10000
 #define OSC_FREQ_RANGE  (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX     32767 // 16 bit signed
-#define GLIDE_RATE      1 // frequency change rate in Hz/sample
+#define GLIDE_RATE      (QS15_ONE >> 2) // frequency change rate in Hz/sample
 
 #define LFO_FREQ_MIN    0.1
 #define LFO_FREQ_MAX    10.0
@@ -39,8 +39,8 @@
 
 enum waveform_t {SQUARE, SAW, TRIANGLE, SINE};
 
-typedef uint32_t qu8_t; // unsigned 24.8 fixed point
-typedef uint32_t qs15_t; // signed fixed point [-1 - 1)
+typedef uint32_t qu8_t;  // unsigned 24.8 fixed point
+typedef int32_t qs15_t;  // signed fixed point [-1 - 1)
 typedef uint32_t qu16_t; // unsigned fixed point [0 - 1)
 typedef uint32_t qu32_t; // unsigned fixed point [0 - 1)
 

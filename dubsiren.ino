@@ -14,11 +14,11 @@ volatile uint16_t mod_frequency  = 0;                // additive frequency shift
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
 volatile waveform_t lfo_waveform = SQUARE;
-volatile qu8_t lfo_frequency     = float_to_qu8(2);
+volatile qu8_t lfo_frequency     = float_to_qu8(2.0);
 volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
 
 volatile qu32_t lfo_phase        = 0;
-volatile qs15_t lfo_mod_depth    = 0; // QS15_ONE / 10;    // mod osc frequency by 10%
+volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;    // mod osc frequency by 10%
 volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
 volatile bool btn_state          = false;
 
@@ -187,13 +187,13 @@ void I2S_Handler() {
         pwm_state = !pwm_state;
     }
 
-    // // update oscillator frequency (glide)
-    // int osc_frequency_diff = osc_setpoint - osc_frequency;
-    // if (osc_frequency_diff > 0) {
-    //     osc_frequency += min(osc_frequency_diff, GLIDE_RATE);
-    // } else if (osc_frequency_diff < 0) {
-    //     osc_frequency -= min(-osc_frequency_diff, GLIDE_RATE);
-    // }
+    // update oscillator frequency (glide)
+    qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint) - qu16_to_qs15(osc_frequency);
+    if (osc_frequency_diff & 0x80000000) {
+        osc_frequency -= min(qs15_invert(osc_frequency_diff), GLIDE_RATE);
+    } else {
+        osc_frequency += min(osc_frequency_diff, GLIDE_RATE);
+    }
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
@@ -201,10 +201,6 @@ void I2S_Handler() {
 
     // get lfo value
     qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
-
-    // // modulate osc frequency with scaled lfo value
-    // mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_frequency);
-    // osc_step = (uint16_t) (osc_frequency + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     mod_frequency = mul_qs15_uint16(
         mul_qs15(lfo_value, lfo_mod_depth), qu16_to_uint16(osc_frequency));
@@ -223,23 +219,18 @@ void loop () {
     if (digitalRead(PIN_BTN)) {
         btn_state = false;
     } else {
-        if (!last_btn_state) {lfo_phase = 0;}
+        if (!last_btn_state) {lfo_phase = 0;} // reset phase at start of envelope
         btn_state = true;
-        last_btn_state = btn_state;
     }
+    last_btn_state = btn_state;
 
     // read frequency pot
     int new_osc_reading = readAdc(ADC_CH_OSC);
     if (abs(osc_reading - new_osc_reading) > 1) {
         osc_reading = new_osc_reading;
-
-        // float norm_osc_reading = (float) new_osc_reading / ADC_RES;
-        // norm_osc_reading *= norm_osc_reading; // turn the frequency scale quadratic
-        // osc_setpoint = uint16_t(norm_osc_reading * OSC_FREQ_RANGE) + OSC_FREQ_MIN;
-
         qu16_t norm_osc_reading = uint16_to_qu16(osc_reading) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
         norm_osc_reading = mul_qu16(norm_osc_reading, norm_osc_reading); // create quadratic curve
-        osc_frequency = norm_osc_reading * OSC_FREQ_RANGE + uint16_to_qu16(OSC_FREQ_MIN); // calculate frequency setpoint
+        osc_setpoint = norm_osc_reading * OSC_FREQ_RANGE + uint16_to_qu16(OSC_FREQ_MIN); // calculate frequency setpoint
     }
 
     // read lfo pot
@@ -257,8 +248,16 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        // sprintf(stringBuffer, "%d, %d, %d",
-        //     osc_frequency, mod_frequency, (uint16_t) (osc_frequency + mod_frequency));
-        Serial.println(osc_frequency >> 16);
+        // qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint) - qu16_to_qs15(osc_frequency);
+        // sprintf(stringBuffer, "%x, %x %x %x",
+        //     qu16_to_qs15(osc_setpoint),
+        //     qu16_to_qs15(osc_frequency),
+        //     osc_frequency_diff,
+        //     min(osc_frequency_diff, GLIDE_RATE));
+        //
+        // Serial.println(stringBuffer);
+
+
+        Serial.println((float) lfo_phase / 4294967296);
     }
 }
