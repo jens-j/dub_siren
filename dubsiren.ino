@@ -5,11 +5,11 @@
 #include "sine.h"
 
 
-volatile waveform_t osc_waveform = SAW;
+volatile waveform_t osc_waveform = SINE;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile uint16_t osc_amplitude  = 5000;
-volatile uint16_t osc_setpoint   = 1000;             // base frequency setpoint, set by PIN_OSC_POT
-volatile uint16_t osc_frequency  = osc_setpoint;     // base frequency current value
+volatile qu16_t osc_setpoint     = uint16_to_qu16(1000);             // base frequency setpoint, set by PIN_OSC_POT
+volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
@@ -18,7 +18,7 @@ volatile qu8_t lfo_frequency     = float_to_qu8(2);
 volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
 
 volatile qu32_t lfo_phase        = 0;
-volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;    // mod osc frequency by 10%
+volatile qs15_t lfo_mod_depth    = 0; // QS15_ONE / 10;    // mod osc frequency by 10%
 volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
 volatile bool btn_state          = false;
 
@@ -202,9 +202,14 @@ void I2S_Handler() {
     // get lfo value
     qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
 
-    // modulate osc frequency with scaled lfo value
-    mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_frequency);
-    osc_step = (uint16_t) (osc_frequency + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
+    // // modulate osc frequency with scaled lfo value
+    // mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_mod_depth), osc_frequency);
+    // osc_step = (uint16_t) (osc_frequency + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
+
+    mod_frequency = mul_qs15_uint16(
+        mul_qs15(lfo_value, lfo_mod_depth), qu16_to_uint16(osc_frequency));
+    osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency)
+        * (QU32_ONE / SAMPLE_RATE);
 
     // get oscillator value
     sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
@@ -227,9 +232,14 @@ void loop () {
     int new_osc_reading = readAdc(ADC_CH_OSC);
     if (abs(osc_reading - new_osc_reading) > 1) {
         osc_reading = new_osc_reading;
-        float norm_osc_reading = (float) new_osc_reading / ADC_RES;
-        norm_osc_reading *= norm_osc_reading; // turn the frequency scale quadratic
-        osc_frequency = uint16_t(norm_osc_reading * OSC_FREQ_RANGE) + OSC_FREQ_MIN;
+
+        // float norm_osc_reading = (float) new_osc_reading / ADC_RES;
+        // norm_osc_reading *= norm_osc_reading; // turn the frequency scale quadratic
+        // osc_setpoint = uint16_t(norm_osc_reading * OSC_FREQ_RANGE) + OSC_FREQ_MIN;
+
+        qu16_t norm_osc_reading = uint16_to_qu16(osc_reading) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
+        norm_osc_reading = mul_qu16(norm_osc_reading, norm_osc_reading); // create quadratic curve
+        osc_frequency = norm_osc_reading * OSC_FREQ_RANGE + uint16_to_qu16(OSC_FREQ_MIN); // calculate frequency setpoint
     }
 
     // read lfo pot
@@ -249,6 +259,6 @@ void loop () {
 
         // sprintf(stringBuffer, "%d, %d, %d",
         //     osc_frequency, mod_frequency, (uint16_t) (osc_frequency + mod_frequency));
-        Serial.println(osc_reading);
+        Serial.println(osc_frequency >> 16);
     }
 }
