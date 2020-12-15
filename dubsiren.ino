@@ -13,12 +13,12 @@ volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current v
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
-volatile waveform_t lfo_waveform = SQUARE;
+volatile waveform_t lfo_shape    = SQUARE;
 volatile qu8_t lfo_frequency     = float_to_qu8(2.0);
 volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
 
 volatile qu32_t lfo_phase        = 0;
-volatile qs15_t lfo_mod_depth    = QS15_ONE / 10;    // mod osc frequency by 10%
+volatile qs15_t lfo_depth        = QS15_ONE / 10;    // mod osc frequency by 10%
 volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
 volatile bool btn_state          = false;
 
@@ -28,6 +28,8 @@ bool pwm_state                   = true;
 bool last_btn_state              = false;
 uint16_t osc_reading             = 0;
 uint16_t lfo_reading             = 0;
+uint16_t depth_reading           = 0;
+uint16_t shape_reading           = 0;
 
 
 void setup () {
@@ -63,9 +65,13 @@ void setupAdc () {
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
 
     PORT->Group[1].PINCFG[2].bit.PMUXEN = 1;    // mux ADC on PB02 / pin A1
+    PORT->Group[1].PINCFG[3].bit.PMUXEN = 1;    // mux ADC on PB03 / pin A2
     PORT->Group[0].PINCFG[4].bit.PMUXEN = 1;    // mux ADC on PA04 / pin A3
+    PORT->Group[0].PINCFG[5].bit.PMUXEN = 1;    // mux ADC on PA05 / pin A4
     PORT->Group[1].PMUX[1].bit.PMUXE = 1;       // select AN10 (group B) for PB02
+    PORT->Group[1].PMUX[1].bit.PMUXO = 1;       // select AN11 (group B) for PB03
     PORT->Group[0].PMUX[2].bit.PMUXE = 1;       // select AN04 (group B) for PA04
+    PORT->Group[0].PMUX[2].bit.PMUXO = 1;       // select AN05 (group B) for PA05
 
     ADC->CTRLA.bit.ENABLE = 0;                  // disable peripheral before starting clock
     PM->APBCMASK.bit.ADC_ = 1;                  // start APBC clock
@@ -200,10 +206,10 @@ void I2S_Handler() {
     lfo_phase += lfo_step;
 
     // get lfo value
-    qs15_t lfo_value = getAmplitude(lfo_waveform, lfo_phase);
+    qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
 
     mod_frequency = mul_qs15_uint16(
-        mul_qs15(lfo_value, lfo_mod_depth), qu16_to_uint16(osc_frequency));
+        mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency)
         * (QU32_ONE / SAMPLE_RATE);
 
@@ -235,10 +241,37 @@ void loop () {
 
     // read lfo pot
     int new_lfo_reading = readAdc(ADC_CH_LFO);
-    if (abs(lfo_reading - new_lfo_reading) > 2) {
+    if (abs(lfo_reading - new_lfo_reading) > 1) {
         lfo_reading = new_lfo_reading;
-        lfo_frequency = float_to_qu8((float) lfo_reading / ADC_RES * LFO_FREQ_RANGE + LFO_FREQ_MIN);
+        qu16_t norm_lfo_reading = uint16_to_qu16(lfo_reading) >> ADC_RES_LOG2;
+        norm_lfo_reading = mul_qu16(norm_lfo_reading, norm_lfo_reading);
+        lfo_frequency = mul_qu8(qu16_to_qu8(norm_lfo_reading), float_to_qu8(LFO_FREQ_RANGE))
+            + float_to_qu8(LFO_FREQ_MIN);
         lfo_step = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE);
+    }
+
+    // read lfo mod depth pot
+    int new_depth_reading = readAdc(ADC_CH_DEPTH);
+    if (abs(depth_reading - new_depth_reading) > 1) {
+        depth_reading = new_depth_reading;
+        qs15_t norm_depth_reading = uint16_to_qs15(depth_reading) >> ADC_RES_LOG2;
+        lfo_depth = mul_qs15_uint16(norm_depth_reading, float_to_qs15(LFO_DEPTH_RANGE))
+            + float_to_qs15(LFO_DEPTH_MIN);
+    }
+
+    // read lfo shape pot
+    int new_shape_reading = readAdc(ADC_CH_SHAPE);
+    if (abs(shape_reading - new_shape_reading) > 1) {
+        shape_reading = new_shape_reading;
+        if (shape_reading >= ADC_RES * 3 / 4) {
+            lfo_shape = SQUARE;
+        } else if (shape_reading >= ADC_RES / 2) {
+            lfo_shape = SAW;
+        } else if (shape_reading >= ADC_RES / 4) {
+            lfo_shape = TRIANGLE;
+        } else {
+            lfo_shape = SINE;
+        }
     }
 
     // blink led at 2 Hz
@@ -257,7 +290,7 @@ void loop () {
         //
         // Serial.println(stringBuffer);
 
-
-        Serial.println((float) lfo_phase / 4294967296);
+        qs15_t norm_depth_reading = uint16_to_qs15(depth_reading) >> ADC_RES_LOG2;
+        Serial.println(shape_reading);
     }
 }
