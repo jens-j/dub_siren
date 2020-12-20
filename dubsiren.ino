@@ -5,7 +5,7 @@
 #include "sine.h"
 
 
-volatile waveform_t osc_waveform = SINE;
+volatile waveform_t osc_waveform = SAW;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile uint16_t osc_amplitude  = 5000;
 volatile qu16_t osc_setpoint     = uint16_to_qu16(1000);             // base frequency setpoint, set by PIN_OSC_POT
@@ -13,7 +13,7 @@ volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current v
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
-volatile waveform_t lfo_shape    = SQUARE;
+volatile waveform_t lfo_shape    = SAW;
 volatile qu8_t lfo_frequency     = float_to_qu8(2.0);
 volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
 
@@ -187,11 +187,9 @@ void I2S_Handler() {
     // write sample in compact stereo mode, interrupt flag is cleared automatically
     I2S->DATA[0].reg = btn_state ? (uint32_t) sample << 16 | sample : 0UL;
 
-    if (I2S->INTFLAG.bit.TXUR0 == 1) {
-        I2S->INTFLAG.bit.TXUR0 = 1;
-        digitalWrite(PIN_PWM, pwm_state);
-        pwm_state = !pwm_state;
-    }
+    // update oscillator and lfo phase. these overflow naturally
+    osc_phase += osc_step;
+    lfo_phase += lfo_step;
 
     // update oscillator frequency (glide)
     qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint) - qu16_to_qs15(osc_frequency);
@@ -201,17 +199,11 @@ void I2S_Handler() {
         osc_frequency += min(osc_frequency_diff, GLIDE_RATE);
     }
 
-    // update oscillator and lfo phase. these overflow naturally
-    osc_phase += osc_step;
-    lfo_phase += lfo_step;
-
     // get lfo value
     qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
 
-    mod_frequency = mul_qs15_uint16(
-        mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
-    osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency)
-        * (QU32_ONE / SAMPLE_RATE);
+    mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
+    osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // get oscillator value
     sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
@@ -291,6 +283,6 @@ void loop () {
         // Serial.println(stringBuffer);
 
         qs15_t norm_depth_reading = uint16_to_qs15(depth_reading) >> ADC_RES_LOG2;
-        Serial.println(shape_reading);
+        Serial.println(osc_reading);
     }
 }

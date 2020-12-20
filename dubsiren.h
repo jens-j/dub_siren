@@ -69,49 +69,36 @@ inline qs15_t qs15_invert (qs15_t x) {return (~x) + 1;}
 // multiply two qu16_t values
 inline qu16_t mul_qu16 (qu16_t x, qu16_t y) {
 
-    // multiply and normalize
-    return (uint16_t) (((uint32_t) x * y) >> 16);
+    return x * y >> 16;
 }
 
 // multiply two qu16_t values
 inline qu8_t mul_qu8 (qu8_t x, qu8_t y) {
 
-    // multiply and normalize
-    return (uint16_t) (((uint32_t) x * y) >> 8);
+    return x * y >> 8;
 }
 
 // multiply two qs15_t values
 inline qs15_t mul_qs15 (qs15_t x, qs15_t y) {
 
-    uint32_t temp_x = (uint32_t) x;
-    temp_x |= 0xffff0000 * (temp_x >> 15);
-
-    // multiply and normalize
-    return (uint16_t) (((uint32_t) temp_x * y) >> 15);
+    return x * y >> 15;
 }
 
 // scale an int by a signed coefficient
 inline uint16_t mul_qs15_uint16 (qs15_t x, uint16_t y) {
 
-    // cast and sign extend x to 32 bits
-    uint32_t temp_x = (uint32_t) x;
-    temp_x |= 0xffff0000 * (temp_x >> 15);
-
-    // multiply and normalize
-    return (uint16_t) ((temp_x * y) >> 15);
+    return (uint16_t) (x * y >> 15);
 }
 
 // scale an integer by a unsigned coefficient
 inline uint16_t mul_qu16_uint16 (qu16_t x, uint16_t y) {
 
-    // multiply and normalize
-    return (uint16_t) (((uint32_t) x * y) >> 16);
+    return (uint16_t) (x * y >> 16);
 }
 
 // scale an integer by a unsigned coefficient
 inline uint32_t mul_qu8_uint32 (qu8_t x, uint32_t y) {
 
-    // multiply and normalize
     return (x * y) >> 8;
 }
 
