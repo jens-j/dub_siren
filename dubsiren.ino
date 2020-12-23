@@ -5,10 +5,10 @@
 #include "sine.h"
 
 
-volatile waveform_t osc_waveform = SAW;
+volatile waveform_t osc_waveform = SINE;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile uint16_t osc_amplitude  = 5000;
-volatile qu16_t osc_setpoint     = uint16_to_qu16(1000);             // base frequency setpoint, set by PIN_OSC_POT
+volatile qu16_t osc_setpoint     = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
 volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
@@ -16,9 +16,13 @@ volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1
 volatile waveform_t lfo_shape    = SAW;
 volatile qu8_t lfo_frequency     = float_to_qu8(2.0);
 volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
-
 volatile qu32_t lfo_phase        = 0;
 volatile qs15_t lfo_depth        = QS15_ONE / 10;    // mod osc frequency by 10%
+
+volatile qu8_t decay_time        = 0;
+volatile qu32_t decay_value      = QU32_ONE;
+volatile qu32_t decay_step       = 0;
+
 volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
 volatile bool btn_state          = false;
 
@@ -30,6 +34,7 @@ uint16_t osc_reading             = 0;
 uint16_t lfo_reading             = 0;
 uint16_t depth_reading           = 0;
 uint16_t shape_reading           = 0;
+uint16_t decay_reading           = 0;
 
 
 void setup () {
@@ -68,10 +73,14 @@ void setupAdc () {
     PORT->Group[1].PINCFG[3].bit.PMUXEN = 1;    // mux ADC on PB03 / pin A2
     PORT->Group[0].PINCFG[4].bit.PMUXEN = 1;    // mux ADC on PA04 / pin A3
     PORT->Group[0].PINCFG[5].bit.PMUXEN = 1;    // mux ADC on PA05 / pin A4
+    PORT->Group[0].PINCFG[6].bit.PMUXEN = 1;    // mux ADC on PA06 / pin A5
+    PORT->Group[0].PINCFG[3].bit.PMUXEN = 1;    // mux VREFA on PA03 / pin AREF
     PORT->Group[1].PMUX[1].bit.PMUXE = 1;       // select AN10 (group B) for PB02
     PORT->Group[1].PMUX[1].bit.PMUXO = 1;       // select AN11 (group B) for PB03
     PORT->Group[0].PMUX[2].bit.PMUXE = 1;       // select AN04 (group B) for PA04
     PORT->Group[0].PMUX[2].bit.PMUXO = 1;       // select AN05 (group B) for PA05
+    PORT->Group[0].PMUX[3].bit.PMUXE = 1;       // select AN06 (group B) for PA06
+    PORT->Group[0].PMUX[1].bit.PMUXO = 1;       // select VREFA (group B) for PA03
 
     ADC->CTRLA.bit.ENABLE = 0;                  // disable peripheral before starting clock
     PM->APBCMASK.bit.ADC_ = 1;                  // start APBC clock
@@ -185,11 +194,21 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 void I2S_Handler() {
 
     // write sample in compact stereo mode, interrupt flag is cleared automatically
-    I2S->DATA[0].reg = btn_state ? (uint32_t) sample << 16 | sample : 0UL;
+    //I2S->DATA[0].reg = btn_state ? (uint32_t) sample << 16 | sample : 0UL;
+    I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
     lfo_phase += lfo_step;
+
+    // decrease decay coefficient
+    if (!btn_state) {
+        if (decay_step < decay_value) {
+            decay_value -= decay_step;
+        } else {
+            decay_value = 0;
+        }
+    }
 
     // update oscillator frequency (glide)
     qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint) - qu16_to_qs15(osc_frequency);
@@ -205,8 +224,16 @@ void I2S_Handler() {
     mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
-    // get oscillator value
-    sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
+    // // get oscillator value
+    // sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
+    //
+    // // apply decay
+    // sample = mul_qu16_uint16(qu32_to_qu16(decay_value), sample);
+
+    // multiply the wavoform with the decay coefficient and use that to scale the amplitude
+    sample = mul_qs15_uint16(
+        mul_qs15(getAmplitude(osc_waveform, osc_phase), qu32_to_qs15(decay_value)),
+        osc_amplitude);
 }
 
 void loop () {
@@ -219,12 +246,13 @@ void loop () {
     } else {
         if (!last_btn_state) {lfo_phase = 0;} // reset phase at start of envelope
         btn_state = true;
+        decay_value = QU32_ONE;
     }
     last_btn_state = btn_state;
 
     // read frequency pot
     int new_osc_reading = readAdc(ADC_CH_OSC);
-    if (abs(osc_reading - new_osc_reading) > 1) {
+    if (abs(osc_reading - new_osc_reading) > POT_DEAD_ZONE) {
         osc_reading = new_osc_reading;
         qu16_t norm_osc_reading = uint16_to_qu16(osc_reading) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
         norm_osc_reading = mul_qu16(norm_osc_reading, norm_osc_reading); // create quadratic curve
@@ -233,7 +261,7 @@ void loop () {
 
     // read lfo pot
     int new_lfo_reading = readAdc(ADC_CH_LFO);
-    if (abs(lfo_reading - new_lfo_reading) > 1) {
+    if (abs(lfo_reading - new_lfo_reading) > POT_DEAD_ZONE) {
         lfo_reading = new_lfo_reading;
         qu16_t norm_lfo_reading = uint16_to_qu16(lfo_reading) >> ADC_RES_LOG2;
         norm_lfo_reading = mul_qu16(norm_lfo_reading, norm_lfo_reading);
@@ -244,16 +272,25 @@ void loop () {
 
     // read lfo mod depth pot
     int new_depth_reading = readAdc(ADC_CH_DEPTH);
-    if (abs(depth_reading - new_depth_reading) > 1) {
+    if (abs(depth_reading - new_depth_reading) > POT_DEAD_ZONE) {
         depth_reading = new_depth_reading;
         qs15_t norm_depth_reading = uint16_to_qs15(depth_reading) >> ADC_RES_LOG2;
         lfo_depth = mul_qs15_uint16(norm_depth_reading, float_to_qs15(LFO_DEPTH_RANGE))
             + float_to_qs15(LFO_DEPTH_MIN);
     }
 
+    // read decay pot
+    int new_decay_reading = readAdc(ADC_CH_DECAY);
+    if (abs(decay_reading - new_decay_reading) > POT_DEAD_ZONE) {
+        decay_reading = new_decay_reading;
+        qu16_t norm_decay_reading = uint16_to_qu16(decay_reading) >> ADC_RES_LOG2;
+        decay_time = mul_qu8(qu16_to_qu8(norm_decay_reading), float_to_qu8(DECAY_MAX));
+        decay_step = QU32_ONE / mul_qu8_uint32(decay_time, SAMPLE_RATE);
+    }
+
     // read lfo shape pot
     int new_shape_reading = readAdc(ADC_CH_SHAPE);
-    if (abs(shape_reading - new_shape_reading) > 1) {
+    if (abs(shape_reading - new_shape_reading) > POT_DEAD_ZONE) {
         shape_reading = new_shape_reading;
         if (shape_reading >= ADC_RES * 3 / 4) {
             lfo_shape = SQUARE;
@@ -283,6 +320,8 @@ void loop () {
         // Serial.println(stringBuffer);
 
         qs15_t norm_depth_reading = uint16_to_qs15(depth_reading) >> ADC_RES_LOG2;
-        Serial.println(osc_reading);
+        Serial.println((float) decay_time / 256);
+        Serial.println(decay_value, HEX);
+        Serial.println("");
     }
 }

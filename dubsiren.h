@@ -10,12 +10,14 @@
 #define PIN_LFO_DEPTH   A2
 #define PIN_LFO_POT     A3
 #define PIN_LFO_SHAPE   A4
+#define PIN_DECAY       A5
 #define PIN_I2S_BCLK    2
 #define PIN_I2S_WCLK    3
 #define PIN_I2S_DATA    A6
 
 #define ADC_CH_LFO      4
 #define ADC_CH_SHAPE    5
+#define ADC_CH_DECAY    6
 #define ADC_CH_OSC      10
 #define ADC_CH_DEPTH    11
 
@@ -24,6 +26,7 @@
 #define ADC_RES         1024
 #define ADC_RES_LOG2    10
 #define SAMPLE_RATE     48000UL
+#define POT_DEAD_ZONE   2
 
 #define OSC_FREQ_MIN    100
 #define OSC_FREQ_MAX    10000
@@ -37,6 +40,8 @@
 #define LFO_DEPTH_MIN   0.0
 #define LFO_DEPTH_MAX   0.9
 #define LFO_DEPTH_RANGE (LFO_DEPTH_MAX - LFO_DEPTH_MIN)
+
+#define DECAY_MAX       5.0 // seconds
 
 #define QU32_ONE        0xffffffffUL
 #define QU16_ONE        0x0000ffffUL
@@ -72,7 +77,7 @@ inline qu16_t mul_qu16 (qu16_t x, qu16_t y) {
     return x * y >> 16;
 }
 
-// multiply two qu16_t values
+// multiply two qu8_t values
 inline qu8_t mul_qu8 (qu8_t x, qu8_t y) {
 
     return x * y >> 8;
@@ -87,13 +92,13 @@ inline qs15_t mul_qs15 (qs15_t x, qs15_t y) {
 // scale an int by a signed coefficient
 inline uint16_t mul_qs15_uint16 (qs15_t x, uint16_t y) {
 
-    return (uint16_t) (x * y >> 15);
+    return (uint16_t) (x * (uint32_t) y >> 15);
 }
 
 // scale an integer by a unsigned coefficient
 inline uint16_t mul_qu16_uint16 (qu16_t x, uint16_t y) {
 
-    return (uint16_t) (x * y >> 16);
+    return (uint16_t) (x * (uint32_t) y >> 16);
 }
 
 // scale an integer by a unsigned coefficient
@@ -107,5 +112,6 @@ inline uint16_t mul_qu32_uint16 (qu32_t x, uint16_t y) {
 
     return mul_qu16_uint16(qu32_to_qu16(x), y);
 }
+
 
 #endif
