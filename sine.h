@@ -1,5 +1,8 @@
 #include "dubsiren.h"
 
+#ifndef __SINE_H
+#define __SINE_H
+
 #define SINE_SAMPLES 1024
 
 const qs15_t SINE_TABLE[SINE_SAMPLES] = {
@@ -107,3 +110,5 @@ const qs15_t SINE_TABLE[SINE_SAMPLES] = {
     0x7ff8,0x7ff9,0x7ffa,0x7ffb,0x7ffc,0x7ffc,0x7ffd,0x7ffe,0x7ffe,0x7fff,
     0x7fff,0x7fff,0x7fff,0x7fff
 };
+
+#endif

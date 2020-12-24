@@ -2,10 +2,12 @@
 #include <sam.h>
 #include <wiring_private.h>
 #include "dubsiren.h"
+#include "fixedpoint.h"
 #include "sine.h"
+#include "biquad.h"
 
 
-volatile waveform_t osc_waveform = SINE;
+volatile waveform_t osc_waveform = SQUARE;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile uint16_t osc_amplitude  = 5000;
 volatile qu16_t osc_setpoint     = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
@@ -13,7 +15,7 @@ volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current v
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
-volatile waveform_t lfo_shape    = SAW;
+volatile waveform_t lfo_shape    = SQUARE;
 volatile qu8_t lfo_frequency     = float_to_qu8(2.0);
 volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
 volatile qu32_t lfo_phase        = 0;
@@ -23,8 +25,14 @@ volatile qu8_t decay_time        = 0;
 volatile qu32_t decay_value      = QU32_ONE;
 volatile qu32_t decay_step       = 0;
 
-volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
+volatile uint16_t cutoff         = FILTER_MAX;
+volatile qs15_t filter_a[2]      = {0, 0};
+volatile qs15_t filter_b[3]      = {0, 0, 0};
+volatile uint16_t filter_in[3]  = {0, 0, 0};        // unfiltered
+volatile uint16_t filter_out[3] = {0, 0, 0};        // filtered
+
 volatile bool btn_state          = false;
+volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
 
 uint32_t led_t0                  = 0;
 bool led_state                   = true;
@@ -35,6 +43,7 @@ uint16_t lfo_reading             = 0;
 uint16_t depth_reading           = 0;
 uint16_t shape_reading           = 0;
 uint16_t decay_reading           = 0;
+uint16_t filter_reading          = 0;
 
 
 void setup () {
@@ -171,7 +180,7 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
                 local_phase = qu32_to_qs15(phase);
                 return QS15_MINUS_ONE + (local_phase << 2);
             } else {
-                local_phase = (qu32_to_qs15(phase) - (QS15_ONE >> 2)); // [0.5 - 1] -> [0 - 1]
+                local_phase = (qu32_to_qs15(phase) - (QS15_ONE >> 1)); // [0.5 - 1] -> [0 - 1]
                 return QS15_ONE - (local_phase << 2);
             }
 
@@ -183,9 +192,9 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
             } else if (phase < QU32_ONE / 2) {
                 return SINE_TABLE[SINE_SAMPLES - index - 1];
             } else if (phase < QU32_ONE / 4 * 3) {
-                return qs15_invert(SINE_TABLE[index]);
+                return qs_invert(SINE_TABLE[index]);
             } else {
-                return qs15_invert(SINE_TABLE[SINE_SAMPLES - index - 1]);
+                return qs_invert(SINE_TABLE[SINE_SAMPLES - index - 1]);
             }
     }
 }
@@ -195,7 +204,13 @@ void I2S_Handler() {
 
     // write sample in compact stereo mode, interrupt flag is cleared automatically
     //I2S->DATA[0].reg = btn_state ? (uint32_t) sample << 16 | sample : 0UL;
-    I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
+    I2S->DATA[0].reg = (uint32_t) filter_out[0] << 16 | filter_out[0];
+
+    // shift sample buffers
+    filter_in[2] = filter_in[1];
+    filter_in[1] = filter_in[0];
+    filter_out[2] = filter_out[1];
+    filter_out[1] = filter_out[0];
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
@@ -213,7 +228,7 @@ void I2S_Handler() {
     // update oscillator frequency (glide)
     qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint) - qu16_to_qs15(osc_frequency);
     if (osc_frequency_diff & 0x80000000) {
-        osc_frequency -= min(qs15_invert(osc_frequency_diff), GLIDE_RATE);
+        osc_frequency -= min(qs_invert(osc_frequency_diff), GLIDE_RATE);
     } else {
         osc_frequency += min(osc_frequency_diff, GLIDE_RATE);
     }
@@ -221,19 +236,31 @@ void I2S_Handler() {
     // get lfo value
     qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
 
-    mod_frequency = mul_qs15_uint16(mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
+    mod_frequency = mul_qs15_int16(mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // // get oscillator value
-    // sample = mul_qs15_uint16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
+    // sample = mul_qs15_int16(getAmplitude(osc_waveform, osc_phase), osc_amplitude);
     //
     // // apply decay
     // sample = mul_qu16_uint16(qu32_to_qu16(decay_value), sample);
 
+    qs15_t amplitude = getAmplitude(osc_waveform, osc_phase);
+    qs15_t decay_coeff = qu32_to_qs15(decay_value);
+    decay_coeff = mul_qs15(decay_coeff, decay_coeff); // make quadratic
+
     // multiply the wavoform with the decay coefficient and use that to scale the amplitude
-    sample = mul_qs15_uint16(
-        mul_qs15(getAmplitude(osc_waveform, osc_phase), qu32_to_qs15(decay_value)),
-        osc_amplitude);
+    filter_in[0] = mul_qs15_int16(amplitude, osc_amplitude);
+    filter_in[0] = mul_qs15_int16(decay_coeff, filter_in[0]);
+
+    // apply biquad filter
+    filter_out[0] = mul_qs12_int16(filter_b[0], filter_in[0])
+                    + mul_qs12_int16(filter_b[1], filter_in[1])
+                    + mul_qs12_int16(filter_b[2], filter_in[2])
+                    + mul_qs12_int16(filter_a[0], filter_out[1])
+                    + mul_qs12_int16(filter_a[1], filter_out[2]);
+
+    // sample = mul_qs15_int16(decay_coeff, filter_in[0]);
 }
 
 void loop () {
@@ -275,7 +302,7 @@ void loop () {
     if (abs(depth_reading - new_depth_reading) > POT_DEAD_ZONE) {
         depth_reading = new_depth_reading;
         qs15_t norm_depth_reading = uint16_to_qs15(depth_reading) >> ADC_RES_LOG2;
-        lfo_depth = mul_qs15_uint16(norm_depth_reading, float_to_qs15(LFO_DEPTH_RANGE))
+        lfo_depth = mul_qs15_int16(norm_depth_reading, float_to_qs15(LFO_DEPTH_RANGE))
             + float_to_qs15(LFO_DEPTH_MIN);
     }
 
@@ -288,20 +315,29 @@ void loop () {
         decay_step = QU32_ONE / mul_qu8_uint32(decay_time, SAMPLE_RATE);
     }
 
-    // read lfo shape pot
-    int new_shape_reading = readAdc(ADC_CH_SHAPE);
-    if (abs(shape_reading - new_shape_reading) > POT_DEAD_ZONE) {
-        shape_reading = new_shape_reading;
-        if (shape_reading >= ADC_RES * 3 / 4) {
-            lfo_shape = SQUARE;
-        } else if (shape_reading >= ADC_RES / 2) {
-            lfo_shape = SAW;
-        } else if (shape_reading >= ADC_RES / 4) {
-            lfo_shape = TRIANGLE;
-        } else {
-            lfo_shape = SINE;
-        }
+    // // read lfo shape pot
+    // int new_shape_reading = readAdc(ADC_CH_SHAPE);
+    // if (abs(shape_reading - new_shape_reading) > POT_DEAD_ZONE) {
+    //     shape_reading = new_shape_reading;
+    //     if (shape_reading >= ADC_RES * 3 / 4) {
+    //         lfo_shape = SQUARE;
+    //     } else if (shape_reading >= ADC_RES / 2) {
+    //         lfo_shape = SAW;
+    //     } else if (shape_reading >= ADC_RES / 4) {
+    //         lfo_shape = TRIANGLE;
+    //     } else {
+    //         lfo_shape = SINE;
+    //     }
+    // }
+
+    int new_filter_reading = readAdc(ADC_CH_FILTER);
+    if (abs(filter_reading - new_filter_reading) > POT_DEAD_ZONE) {
+        filter_reading = new_filter_reading;
+        cutoff = (uint16_t) ((((uint32_t) filter_reading * FILTER_RANGE) >> ADC_RES_LOG2)
+                              + FILTER_MIN);
+        get_lpf_coeffs(cutoff, 1, filter_a, filter_b);
     }
+
 
     // blink led at 2 Hz
     int t = millis();
@@ -310,18 +346,32 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        // qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint) - qu16_to_qs15(osc_frequency);
-        // sprintf(stringBuffer, "%x, %x %x %x",
-        //     qu16_to_qs15(osc_setpoint),
-        //     qu16_to_qs15(osc_frequency),
-        //     osc_frequency_diff,
-        //     min(osc_frequency_diff, GLIDE_RATE));
-        //
-        // Serial.println(stringBuffer);
+        Serial.println(cutoff);
 
-        qs15_t norm_depth_reading = uint16_to_qs15(depth_reading) >> ADC_RES_LOG2;
-        Serial.println((float) decay_time / 256);
-        Serial.println(decay_value, HEX);
-        Serial.println("");
+        Serial.print("a: ");
+        Serial.print((float) filter_a[0] / 4096);
+        Serial.print(",  ");
+        Serial.println((float) filter_a[1] / 4096);
+
+        Serial.print("b: ");
+        Serial.print((float) filter_b[0] / 4096);
+        Serial.print(",  ");
+        Serial.print((float) filter_b[1] / 4096);
+        Serial.print(",  ");
+        Serial.println((float) filter_b[2] / 4096);
+
+        Serial.print("in: ");
+        Serial.print(filter_in[0]);
+        Serial.print(",  ");
+        Serial.print(filter_in[1]);
+        Serial.print(",  ");
+        Serial.println(filter_in[2]);
+
+        Serial.print("out: ");
+        Serial.print(filter_out[0]);
+        Serial.print(",  ");
+        Serial.print(filter_out[1]);
+        Serial.print(",  ");
+        Serial.println(filter_out[2]);
     }
 }
