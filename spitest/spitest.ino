@@ -2,12 +2,13 @@
 
 #define BLOCK_SIZE 8
 
-__attribute__((aligned(16))) DmacDescriptor writeback_section;
-__attribute__((aligned(16))) DmacDescriptor descriptor_section;
+__attribute__((aligned(16))) DmacDescriptor writeback_section[2];
+__attribute__((aligned(16))) DmacDescriptor descriptor_section[2];
 
 uint32_t led_t0 = 0;
 bool led_state = true;
-uint8_t spidata[BLOCK_SIZE];
+uint8_t spi_send_buffer[BLOCK_SIZE];
+uint8_t spi_recv_buffer[BLOCK_SIZE];
 volatile bool active = false;
 
 
@@ -72,6 +73,8 @@ void setupDma () {
 
     DmacDescriptor dma_descriptor;
 
+    dma_descriptor.DESCADDR.reg = 0;
+
     PM->APBBMASK.reg |= PM_APBBMASK_DMAC;
     PM->AHBMASK.reg |= PM_AHBMASK_DMAC;
 
@@ -80,31 +83,32 @@ void setupDma () {
     DMAC->BASEADDR.reg = (uint32_t) &descriptor_section;
 	DMAC->WRBADDR.reg = (uint32_t) &writeback_section;
 
+    // setup sram -> spi dma channel
     DMAC->CHID.reg = 0;
     DMAC->CHCTRLB.reg = DMAC_CHCTRLB_TRIGACT_BEAT | DMAC_CHCTRLB_TRIGSRC(4); // trigger on sercom1_tx
-
-    dma_descriptor.BTCTRL.bit.VALID = 0x1; // Valid.
-    dma_descriptor.BTCTRL.bit.EVOSEL = 0; // No output event
-    dma_descriptor.BTCTRL.bit.BLOCKACT = 0; // No block action.
-    dma_descriptor.BTCTRL.bit.BEATSIZE = 0x0; // Beat size is 1 byte.
-    dma_descriptor.BTCTRL.bit.SRCINC = 1; // Increment the src address.
-    dma_descriptor.BTCTRL.bit.DSTINC = 0; // Don't increment the dst address.
-    dma_descriptor.BTCTRL.bit.STEPSEL = 1;  // Apply step size to src address.
-    dma_descriptor.BTCTRL.bit.STEPSIZE = 0; // Step size is 1 beat size.
-    dma_descriptor.BTCNT.reg = BLOCK_SIZE;
-    dma_descriptor.SRCADDR.reg = (uint32_t) &spidata + BLOCK_SIZE;
-    dma_descriptor.DSTADDR.reg = (uint32_t) &SERCOM1->SPI.DATA.reg; // Push SPI
-    dma_descriptor.DESCADDR.reg = 0; // There isn't one.
-
-    memcpy(&descriptor_section, &dma_descriptor, sizeof(DmacDescriptor));
-
     DMAC->CHINTENSET.bit.TCMPL = 1;
+    dma_descriptor.BTCTRL.reg = DMAC_BTCTRL_VALID | DMAC_BTCTRL_SRCINC | DMAC_BTCTRL_STEPSEL_SRC;
+    dma_descriptor.BTCNT.reg = BLOCK_SIZE;
+    dma_descriptor.SRCADDR.reg = (uint32_t) &spi_send_buffer + BLOCK_SIZE;
+    dma_descriptor.DSTADDR.reg = (uint32_t) &SERCOM1->SPI.DATA.reg;
+    memcpy(&descriptor_section[0], &dma_descriptor, sizeof(DmacDescriptor));
+
+
+    // setup spi -> sram dma channel
+    DMAC->CHID.reg = 1;
+    DMAC->CHCTRLB.reg = DMAC_CHCTRLB_TRIGACT_BEAT | DMAC_CHCTRLB_TRIGSRC(3); // trigger on sercom1_rx
+    dma_descriptor.BTCTRL.reg =
+        DMAC_BTCTRL_VALID | DMAC_BTCTRL_DSTINC | DMAC_BTCTRL_STEPSEL_DST | DMAC_CHCTRLB_LVL_LVL1_Val;
+    dma_descriptor.BTCNT.reg = BLOCK_SIZE;
+    dma_descriptor.SRCADDR.reg = (uint32_t) &SERCOM1->SPI.DATA.reg;
+    dma_descriptor.DSTADDR.reg = (uint32_t) &spi_recv_buffer + BLOCK_SIZE;
+    memcpy(&descriptor_section[1], &dma_descriptor, sizeof(DmacDescriptor));
 
     NVIC_ClearPendingIRQ(DMAC_IRQn);
     NVIC_SetPriority(DMAC_IRQn, 1);
     NVIC_EnableIRQ(DMAC_IRQn);
 
-    DMAC->CTRL.reg = DMAC_CTRL_DMAENABLE | DMAC_CTRL_LVLEN0;
+    DMAC->CTRL.reg = DMAC_CTRL_DMAENABLE | DMAC_CTRL_LVLEN0 | DMAC_CTRL_LVLEN1;
 }
 
 
@@ -135,6 +139,7 @@ void setupSpi () {
 void DMAC_Handler() {
     while (!SERCOM1->SPI.INTFLAG.bit.TXC);
     digitalWrite(PIN_SPI_SS, HIGH);
+    DMAC->CHID.reg = 0;
     DMAC->CHINTFLAG.reg = 0xFF;
     active = false;
 }
@@ -150,10 +155,11 @@ void setup () {
     pinMode(PIN_SPI_SS, OUTPUT);
 
     Serial.begin(115200);
-    while (!Serial); // wait for a serial connection (terminal)
+    // while (!Serial); // wait for a serial connection (terminal)
 
     for (i = 0; i < BLOCK_SIZE; i++) {
-        spidata[i] = (uint8_t) i;
+        spi_send_buffer[i] = (uint8_t) i;
+        spi_recv_buffer[i] = (uint8_t) i;
     }
 
     setupSpi();
@@ -166,21 +172,24 @@ void setup () {
     Serial.println("");
 
     for (i = 0; i < BLOCK_SIZE; i++) {
-        sprintf(buffer, "%02X", *(spidata + i));
+        sprintf(buffer, "%02X", *(spi_send_buffer + i));
         Serial.print(buffer);
     }
     Serial.println("");
 }
 
+
 void loop () {
 
-    // uint8_t data[2] = {0xFF, 0xF0};
-    // read_from_address(0x123456, data, 2);
-    // delay(1);
+    int i;
+    char buffer[100];
 
     if (active == false) {
         delayMicroseconds(10);
         digitalWrite(PIN_SPI_SS, LOW);
+        DMAC->CHID.reg = 1;
+        DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE;
+        DMAC->CHID.reg = 0;
         DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE;
         active = true;
     }
@@ -193,7 +202,13 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        Serial.println(DMAC->CHSTATUS.reg, HEX);
-
+        DMAC->CHID.reg = 1;
+        Serial.println(DMAC->CHINTFLAG.reg, HEX);
+        Serial.println(SERCOM1->SPI.INTFLAG.reg, HEX);
+        for (i = 0; i < BLOCK_SIZE; i++) {
+            sprintf(buffer, "%02X", *(spi_recv_buffer + i));
+            Serial.print(buffer);
+        }
+        Serial.println("");
     }
 }
