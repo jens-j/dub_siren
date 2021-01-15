@@ -6,7 +6,7 @@
 #define __BIQUAD_H
 
 // should not overflow to about 10430 Hz cutoff
-void get_lpf_coeffs (uint16_t f, uint16_t q, volatile qs15_t *a, volatile qs15_t *b) {
+void get_lpf_coeffs (uint16_t f, uint16_t q, volatile qs12_t *a, volatile qs12_t *b) {
 
     qs12_t sin_w, cos_w;
     uint16_t index = mul_qu16_uint16( // one lut equals 1/2 pi w
@@ -20,14 +20,13 @@ void get_lpf_coeffs (uint16_t f, uint16_t q, volatile qs15_t *a, volatile qs15_t
 
     b[0] = (QS12_ONE - cos_w) >> 1;
     b[1] = QS12_ONE - cos_w;
-    b[2] = b[0];
     a[0] = cos_w << 1; // invert a coefficients
-    a[1] = qs_invert(QS12_ONE - alpha);
+    a[1] = alpha - QS12_ONE;
 
     // normalize coefficients
     b[0] = div_qs12(b[0], a0);
     b[1] = div_qs12(b[1], a0);
-    b[2] = div_qs12(b[2], a0);
+    b[2] = b[0];
     a[0] = div_qs12(a[0], a0);
     a[1] = div_qs12(a[1], a0);
 }

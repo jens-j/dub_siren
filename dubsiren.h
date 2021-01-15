@@ -3,7 +3,7 @@
 
 #define PIN_LED         32
 #define PIN_PWM         5
-#define PIN_BTN         7
+#define PIN_BTN         6
 #define PIN_OSC_POT     A1
 #define PIN_LFO_DEPTH   A2
 #define PIN_LFO_POT     A3
@@ -12,6 +12,10 @@
 #define PIN_I2S_BCLK    2
 #define PIN_I2S_WCLK    3
 #define PIN_I2S_DATA    A6
+#define PIN_SPI_CLK     9
+#define PIN_SPI_MISO    10
+#define PIN_SPI_MOSI    8
+#define PIN_SPI_SS      7
 
 #define ADC_CH_LFO      4
 #define ADC_CH_SHAPE    5
@@ -27,7 +31,7 @@
 #define SAMPLE_RATE     48000UL
 #define POT_DEAD_ZONE   2
 
-#define OSC_FREQ_MIN    100
+#define OSC_FREQ_MIN    20
 #define OSC_FREQ_MAX    10000
 #define OSC_FREQ_RANGE  (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX     32767 // 16 bit signed

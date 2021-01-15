@@ -1,0 +1,1 @@
+- clock generators higher than 3 don't seem to work/run
