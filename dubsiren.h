@@ -24,6 +24,10 @@
 #define ADC_CH_OSC      10
 #define ADC_CH_DEPTH    11
 
+#define GLCK_I2S        3
+#define GCLK_ADC        4
+#define GLCK_SPI        5
+
 #define CLOCK_RATE      48000000UL
 #define MAIN_LOOP_MS    500
 #define ADC_RES         1024

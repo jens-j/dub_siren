@@ -1,9 +1,14 @@
+#include "Arduino.h"
+#include "dubsiren.h"
 
+#ifndef __SPI_DMA_H
+#define __SPI_DMA_H
 
 void setupSpi () {
 
+    // Why does this work without configuring GLCK_SPI?
     GCLK->CLKCTRL.bit.ID = 0x15;                // select clock GCLK_SERCOM1_CORE
-    GCLK->CLKCTRL.bit.GEN = 5;                  // clock generator 5
+    GCLK->CLKCTRL.bit.GEN = GLCK_SPI;           // clock generator 5
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
 
     PORT->Group[0].PINCFG[16].bit.PMUXEN = 1;   // mux SPI MOSI on PA16 / pin 8
@@ -22,3 +27,5 @@ void setupSpi () {
     digitalWrite(PIN_SPI_SS, HIGH);
     SERCOM1->SPI.CTRLA.bit.ENABLE = 1;
 }
+
+#endif

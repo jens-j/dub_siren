@@ -1,4 +1,5 @@
 #include "Arduino.h"
+#include "dubsiren.h"
 
 #ifndef __I2S_H
 #define __I2S_H
@@ -7,14 +8,14 @@ void setupI2S() {
     // set the I2S module to 48 kHz tx 16-bit mono mode
 
     // setup the clock for the I2S peripheral
-    GCLK->GENDIV.bit.ID = 3;                    // select generator 3
+    GCLK->GENDIV.bit.ID = GLCK_I2S;             // select generator
     GCLK->GENDIV.bit.DIV = 31;                  // clock divider 48 MHz / 31 / 16 / 2 = 48.387 kHz
-    GCLK->GENCTRL.bit.ID = 3;                   // select generator 3
+    GCLK->GENCTRL.bit.ID = GLCK_I2S;            // select generator
     GCLK->GENCTRL.bit.SRC = 7;                  // FDPLL48M TODO: use the PLL to get 48 kHz
     GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
     GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
     GCLK->CLKCTRL.bit.ID = 0x23;                // select clock GCLK_I2S_0
-    GCLK->CLKCTRL.bit.GEN = 3;                  // clock generator 3
+    GCLK->CLKCTRL.bit.GEN = GLCK_I2S;           // clock generator 
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
 
     // enable peripheral mux

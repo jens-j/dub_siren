@@ -14,6 +14,7 @@ uint32_t led_t0                  = 0;
 bool led_state                   = true;
 bool pwm_state                   = true;
 bool last_btn_state              = false;
+uint32_t input_t0                = 0;
 
 volatile waveform_t osc_waveform = SQUARE;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
@@ -57,6 +58,7 @@ void setup () {
 
     setupSpi();
     setupI2S();
+    get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
 
     Serial.println("Initialization completed");
 }
@@ -78,7 +80,6 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
         // [-1, 1) a multiplication could overflow. Therefore the phase is just subtracted twice.
         case SAW:
            return QS15_ONE - qu32_to_qs15(phase) - qu32_to_qs15(phase);
-           // return qu16_to_qs15(phase);
 
         case TRIANGLE:
             qs15_t local_phase;
@@ -148,7 +149,7 @@ void I2S_Handler() {
     qs15_t decay_coeff = qu32_to_qs15(decay_value);
     decay_coeff = mul_qs15(decay_coeff, decay_coeff); // make quadratic
 
-    // multiply the wavoform with the decay coefficient and use that to scale the amplitude
+    // multiply the waveform with the decay coefficient and use that to scale the amplitude
     filter_in[0] = mul_qs15_int16(amplitude, osc_amplitude);
     filter_in[0] = mul_qs15_int16(decay_coeff, filter_in[0]);
 
@@ -176,7 +177,9 @@ void loop () {
     }
     last_btn_state = btn_state;
 
+    input_t0 = micros();
     input.update();
+    Serial.println(micros() - input_t0);
 
     // read frequency pot
     qu16_t norm_osc_reading = uint16_to_qu16(input.osc_frequency) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
@@ -200,20 +203,16 @@ void loop () {
     decay_time = mul_qu8(qu16_to_qu8(norm_decay_reading), float_to_qu8(DECAY_MAX));
     decay_step = QU32_ONE / mul_qu8_uint32(decay_time, SAMPLE_RATE);
 
-    // // read lfo shape pot
-    // int new_shape_reading = readAdc(ADC_CH_SHAPE);
-    // if (abs(shape_reading - new_shape_reading) > POT_DEAD_ZONE) {
-    //     shape_reading = new_shape_reading;
-    //     if (shape_reading >= ADC_RES * 3 / 4) {
-    //         lfo_shape = SQUARE;
-    //     } else if (shape_reading >= ADC_RES / 2) {
-    //         lfo_shape = SAW;
-    //     } else if (shape_reading >= ADC_RES / 4) {
-    //         lfo_shape = TRIANGLE;
-    //     } else {
-    //         lfo_shape = SINE;
-    //     }
-    // }
+    // read lfo shape pot
+    if (input.lfo_waveform >= ADC_RES * 3 / 4) {
+        lfo_shape = SQUARE;
+    } else if (input.lfo_waveform >= ADC_RES / 2) {
+        lfo_shape = SAW;
+    } else if (input.lfo_waveform >= ADC_RES / 4) {
+        lfo_shape = TRIANGLE;
+    } else {
+        lfo_shape = SINE;
+    }
 
     cutoff = (uint16_t)
         ((((uint32_t) input.filter_cutoff * FILTER_RANGE) >> ADC_RES_LOG2) + FILTER_MIN);
@@ -229,7 +228,7 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        Serial.println(loop_t1);
-        Serial.println("");
+        // Serial.println(filter_out[0]);
+        // Serial.println("");
     }
 }

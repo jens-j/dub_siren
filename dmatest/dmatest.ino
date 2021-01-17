@@ -1,6 +1,6 @@
 #include "dubsiren.h"
 
-#define SPI_DATA_SIZE   16
+#define SPI_DATA_SIZE   256
 #define SPI_PACKET_SIZE (SPI_DATA_SIZE + 5)
 #define SPI_CMD_READ    3
 #define SPI_CMD_WRITE   2
@@ -60,8 +60,14 @@ void setupDma () {
 
 void setupSpi () {
 
+    GCLK->GENDIV.bit.ID = 5;                    // select generator
+    GCLK->GENDIV.bit.DIV = 1;
+    GCLK->GENCTRL.bit.ID = 5;                   // select generator
+    GCLK->GENCTRL.bit.SRC = 7;
+    GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
+    GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
     GCLK->CLKCTRL.bit.ID = 0x15;
-    GCLK->CLKCTRL.bit.GEN = 3;
+    GCLK->CLKCTRL.bit.GEN = 5;
     GCLK->CLKCTRL.bit.CLKEN = 1;
 
     PORT->Group[0].PINCFG[16].reg |= PORT_PINCFG_PMUXEN;  // mux SPI MOSI on PA16 / pin 8
@@ -139,10 +145,12 @@ void setup () {
 void loop () {
 
     int i;
+    uint32_t t0;
 
     // write
     while (active);
     active = true;
+    t0 = micros();
     SERCOM1->SPI.CTRLB.reg = 0; // disable receiving
     descriptor_section[0].SRCADDR.reg = (uint32_t) &spi_send_buffer_write + SPI_PACKET_SIZE;
     digitalWrite(PIN_SPI_SS, LOW);
@@ -151,6 +159,7 @@ void loop () {
 
     // read
     while (active);
+    Serial.println(micros() - t0);
     active = true;
     SERCOM1->SPI.CTRLB.reg = SERCOM_SPI_CTRLB_RXEN; // enable receiving
     descriptor_section[0].SRCADDR.reg = (uint32_t) &spi_send_buffer_read + SPI_PACKET_SIZE;
@@ -161,10 +170,10 @@ void loop () {
     DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE;
 
     // delay(10);
-    while (active);
-    DMAC->CHID.reg = 1;
-    Serial.println(DMAC->CHSTATUS.reg, HEX);
-    Serial.println(DMAC->CHINTFLAG.reg, HEX);
+    // while (active);
+    // DMAC->CHID.reg = 1;
+    // Serial.println(DMAC->CHSTATUS.reg, HEX);
+    // Serial.println(DMAC->CHINTFLAG.reg, HEX);
     // Serial.println(SERCOM1->SPI.DATA.reg, HEX);
     // Serial.println(SERCOM1->SPI.STATUS.reg, HEX);
     // Serial.println(SERCOM1->SPI.INTFLAG.reg, HEX);

@@ -53,8 +53,14 @@ uint16_t Input::_readAdc (int channel) {
 
 void Input::_setupAdc () {
 
+    GCLK->GENDIV.bit.ID = GCLK_ADC;             // select generator
+    GCLK->GENDIV.bit.DIV = 8;                   // clock divider 1
+    GCLK->GENCTRL.bit.ID = GCLK_ADC;            // select generator
+    GCLK->GENCTRL.bit.SRC = 7;                  // FDPLL48M
+    GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
+    GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
     GCLK->CLKCTRL.bit.ID = 0x1e;                // select clock GCLK_ADC
-    GCLK->CLKCTRL.bit.GEN = 3;                  // TODO: this should be a separate clock
+    GCLK->CLKCTRL.bit.GEN = GCLK_ADC;           // select generator
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
 
     PORT->Group[1].PINCFG[2].bit.PMUXEN = 1;    // mux ADC on PB02 / pin A1

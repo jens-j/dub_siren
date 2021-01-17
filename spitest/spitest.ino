@@ -78,5 +78,5 @@ void loop () {
     Serial.println(SERCOM1->SPI.INTFLAG.reg, HEX);
     Serial.println("");
 
-    delay(100);
+    delay(10);
 }
