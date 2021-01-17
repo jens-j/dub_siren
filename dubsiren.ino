@@ -4,12 +4,13 @@
 #include "dubsiren.h"
 #include "input.h"
 #include "fixedpoint.h"
-#include "spidma.h"
+#include "spi_dma.h"
 #include "i2s.h"
 #include "sine.h"
 #include "biquad.h"
 
 Input input                      = Input();
+SpiDma spiDma                    = SpiDma();
 uint32_t led_t0                  = 0;
 bool led_state                   = true;
 bool pwm_state                   = true;
@@ -56,11 +57,16 @@ void setup () {
     Serial.begin(115200);
     //while (!Serial); // wait for a serial connection (terminal)
 
-    setupSpi();
     setupI2S();
     get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
 
     Serial.println("Initialization completed");
+}
+
+
+// IRQ wrapper must be in this file
+void DMAC_Handler () {
+    spiDma.irqHandler();
 }
 
 
@@ -177,9 +183,9 @@ void loop () {
     }
     last_btn_state = btn_state;
 
-    input_t0 = micros();
+    // input_t0 = micros();
     input.update();
-    Serial.println(micros() - input_t0);
+    // Serial.println(micros() - input_t0);
 
     // read frequency pot
     qu16_t norm_osc_reading = uint16_to_qu16(input.osc_frequency) >> ADC_RES_LOG2; // normalize reading to [0 - 1)

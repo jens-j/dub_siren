@@ -1,13 +1,13 @@
 #include "Arduino.h"
-#include "input.h"
 #include "dubsiren.h"
 #include "fixedpoint.h"
+#include "input.h"
 
 
 Input::Input () {
 
-    this->_setupAdc();
-    this->update();
+    _setupAdc();
+    update();
 }
 
 void Input::update () {

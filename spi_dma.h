@@ -4,28 +4,43 @@
 #ifndef __SPI_DMA_H
 #define __SPI_DMA_H
 
-void setupSpi () {
 
-    // Why does this work without configuring GLCK_SPI?
-    GCLK->CLKCTRL.bit.ID = 0x15;                // select clock GCLK_SERCOM1_CORE
-    GCLK->CLKCTRL.bit.GEN = GLCK_SPI;           // clock generator 5
-    GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
+#define RAM_BYTES           (1 << 27)
 
-    PORT->Group[0].PINCFG[16].bit.PMUXEN = 1;   // mux SPI MOSI on PA16 / pin 8
-    PORT->Group[0].PINCFG[17].bit.PMUXEN = 1;   // mux SPI SCK on PA17 / pin 8
-    PORT->Group[0].PINCFG[19].bit.PMUXEN = 1;   // mux SPI MISO on PA19 / pin 8
-    PORT->Group[0].PMUX[8].bit.PMUXE = 1;       // select SERCOM1 PAD0 (group C) for PA16
-    PORT->Group[0].PMUX[8].bit.PMUXO = 1;       // select SERCOM1 PAD1 (group C) for PA17
-    PORT->Group[0].PMUX[9].bit.PMUXO = 1;       // select SERCOM1 PAD3 (group C) for PA19
+#define SPI_DATA_SIZE       1024
+#define SPI_DATA_BYTES      (SPI_DATA_SIZE << 1)
+#define SPI_BUFFER_BYTES    (SPI_DATA_BYTES + 5)
 
-    PM->APBCMASK.bit.SERCOM1_ = 1;              // enable pheripheral clock
-    SERCOM1->SPI.CTRLA.bit.ENABLE = 0;
+#define DMA_CH_WRITE        0
+#define DMA_CH_READ         1
 
-    SERCOM1->SPI.CTRLA.bit.MODE = 3;            // SPI master mode
-    SERCOM1->SPI.CTRLB.bit.RXEN = 0;            // enable receiving
+#define SPI_CMD_READ        3
+#define SPI_CMD_WRITE       2
 
-    digitalWrite(PIN_SPI_SS, HIGH);
-    SERCOM1->SPI.CTRLA.bit.ENABLE = 1;
-}
+
+typedef struct spi_buffer_s {
+    uint8_t opcode;
+    uint32_t address;
+    uint16_t data[SPI_DATA_SIZE];
+} spi_buffer_t;
+
+
+class SpiDma {
+private:
+
+    volatile bool _transfer_active;
+
+    void _setupSpi ();
+    void _setupDma ();
+public:
+    spi_buffer_t read_buffer[2];
+    spi_buffer_t write_buffer[2];
+
+    SpiDma ();
+    void read (int buffer_index);
+    void write (int buffer_index);
+    void erase (); // erase the entire ram ic
+    void irqHandler ();
+};
 
 #endif
