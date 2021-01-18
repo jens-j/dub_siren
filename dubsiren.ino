@@ -55,7 +55,9 @@ void setup () {
     pinMode(PIN_I2S_DATA, OUTPUT);
 
     Serial.begin(115200);
-    //while (!Serial); // wait for a serial connection (terminal)
+    while (!Serial); // wait for a serial connection (terminal)
+
+    spiDma.erase();
 
     setupI2S();
     get_lpf_coeffs(cutoff, 4, filter_a, filter_b);

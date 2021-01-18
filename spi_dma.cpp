@@ -18,7 +18,7 @@ SpiDma::SpiDma () {
 
     _setupSpi();
     _setupDma();
-    erase();
+    //erase();
 }
 
 
@@ -66,11 +66,11 @@ void SpiDma::erase () {
     while (!SERCOM1->SPI.INTFLAG.bit.DRE);
     SERCOM1->SPI.DATA.reg = SPI_CMD_WRITE;
 
-    // // write zero address and 2**27 zeros
-    // for (i = 0; i < 1; i++) {
-    //     while (!SERCOM1->SPI.INTFLAG.bit.DRE);
-    //     SERCOM1->SPI.DATA.reg = 0;
-    // }
+    // write zero address and 2**27 zeros
+    for (i = 0; i < 1; i++) {
+        while (!SERCOM1->SPI.INTFLAG.bit.DRE);
+        SERCOM1->SPI.DATA.reg = 0;
+    }
 
     digitalWrite(PIN_SPI_SS, HIGH);
     _transfer_active = false;
@@ -89,26 +89,31 @@ void SpiDma::irqHandler () {
 
 void SpiDma::_setupSpi () {
 
-    // Why does this work without configuring GLCK_SPI?
+    GCLK->GENDIV.bit.ID = GLCK_SPI;             // select generator
+    GCLK->GENDIV.bit.DIV = 1;                   //
+    GCLK->GENCTRL.bit.ID = GLCK_SPI;            // select generator
+    GCLK->GENCTRL.bit.SRC = 7;                  //
+    GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
+    GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
     GCLK->CLKCTRL.bit.ID = 0x15;                // select clock GCLK_SERCOM1_CORE
     GCLK->CLKCTRL.bit.GEN = GLCK_SPI;           // clock generator 5
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
 
-    PORT->Group[0].PINCFG[16].bit.PMUXEN = 1;   // mux SPI MOSI on PA16 / pin 8
-    PORT->Group[0].PINCFG[17].bit.PMUXEN = 1;   // mux SPI SCK on PA17 / pin 8
-    PORT->Group[0].PINCFG[19].bit.PMUXEN = 1;   // mux SPI MISO on PA19 / pin 8
-    PORT->Group[0].PMUX[8].bit.PMUXE = 1;       // select SERCOM1 PAD0 (group C) for PA16
-    PORT->Group[0].PMUX[8].bit.PMUXO = 1;       // select SERCOM1 PAD1 (group C) for PA17
-    PORT->Group[0].PMUX[9].bit.PMUXO = 1;       // select SERCOM1 PAD3 (group C) for PA19
+    PORT->Group[0].PINCFG[16].reg |= PORT_PINCFG_PMUXEN;  // mux SPI MOSI on PA16 / pin 8
+    PORT->Group[0].PINCFG[17].reg |= PORT_PINCFG_PMUXEN;  // mux SPI SCK  on PA17 / pin 9
+    PORT->Group[0].PINCFG[19].reg |= PORT_PINCFG_PMUXEN;  // mux SPI MISO on PA19 / pin 10
+    PORT->Group[0].PMUX[8].reg = PORT_PMUX_PMUXO_C | PORT_PMUX_PMUXE_C;
+    PORT->Group[0].PMUX[9].reg = PORT_PMUX_PMUXO_C;
 
-    PM->APBCMASK.bit.SERCOM1_ = 1;              // enable pheripheral clock
+    PM->APBCMASK.reg |= PM_APBCMASK_SERCOM1; // enable pheripheral clock
     SERCOM1->SPI.CTRLA.bit.ENABLE = 0;
 
-    SERCOM1->SPI.CTRLA.bit.MODE = 3;            // SPI master mode
-    SERCOM1->SPI.CTRLB.bit.RXEN = 0;            // enable receiving
+    SERCOM1->SPI.BAUD.reg = 2;
+    SERCOM1->SPI.CTRLA.reg = SERCOM_SPI_CTRLA_MODE_SPI_MASTER | SERCOM_SPI_CTRLA_DIPO(3);
+    SERCOM1->SPI.CTRLB.reg = SERCOM_SPI_CTRLB_RXEN; // enable receiving
 
     digitalWrite(PIN_SPI_SS, HIGH);
-    SERCOM1->SPI.CTRLA.bit.ENABLE = 1;
+    SERCOM1->SPI.CTRLA.reg |= SERCOM_SPI_CTRLA_ENABLE;
 }
 
 
