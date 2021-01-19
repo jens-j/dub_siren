@@ -34,6 +34,7 @@
 #define ADC_RES_LOG2    10
 #define SAMPLE_RATE     48000UL
 #define POT_DEAD_ZONE   2
+#define BTN_TIME        20 // ms
 
 #define OSC_FREQ_MIN    20
 #define OSC_FREQ_MAX    10000
@@ -57,5 +58,10 @@
 #define PI              3.141593
 
 enum waveform_t {SQUARE, SAW, TRIANGLE, SINE};
+
+inline uint16_t add_uint16_clip(uint16_t x, uint16_t y) {
+    uint32_t z = (uint32_t) x * y;
+    return z & 0x10000 ? 0xFFFF : (uint16_t) z;
+}
 
 #endif

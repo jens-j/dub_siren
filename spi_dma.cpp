@@ -6,49 +6,56 @@
 __attribute__((aligned(16))) DmacDescriptor _writeback_section[2];
 __attribute__((aligned(16))) DmacDescriptor _descriptor_section[2];
 
-const uint8_t ZERO = 0;
-
 
 SpiDma::SpiDma () {
-    _transfer_active = false;
-    read_buffer[0].opcode = SPI_CMD_READ;
-    read_buffer[1].opcode = SPI_CMD_READ;
-    write_buffer[0].opcode = SPI_CMD_WRITE;
-    write_buffer[1].opcode = SPI_CMD_WRITE;
+    transfer_active = false;
 
     _setupSpi();
     _setupDma();
-    //erase();
+    erase();
 }
 
 
-void SpiDma::read (int index) {
+// the write dma channel is used to issue a read command and to generate the clock for the SPI read sequence
+void SpiDma::read (int index, uint32_t address) {
 
-    while (_transfer_active);
-    _transfer_active = true;
+    while (transfer_active);
+    transfer_active = true;
 
-    SERCOM1->SPI.CTRLB.reg = SERCOM_SPI_CTRLB_RXEN; // enable receiving
-    _descriptor_section[DMA_CH_READ].DSTADDR.reg =
-        (uint32_t) &read_buffer[index] + SPI_BUFFER_BYTES;
-    digitalWrite(PIN_SPI_SS, LOW);
-    DMAC->CHID.reg = DMA_CH_READ;
-    DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE;
-    DMAC->CHID.reg = DMA_CH_WRITE;
-    DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE;
-}
+    write_buffer[index].opcode = SPI_CMD_READ; // set packet opcode
+    *((uint32_t*) &write_buffer[index].address) = address; // set packet address
 
-
-void SpiDma::write (int index) {
-
-    while (_transfer_active);
-    _transfer_active = true;
-
-    SERCOM1->SPI.CTRLB.reg = 0; // disable receiving
-    _descriptor_section[DMA_CH_WRITE].DSTADDR.reg =
+    _descriptor_section[DMA_CH_WRITE].SRCADDR.reg = // set dma write descriptor source address
         (uint32_t) &write_buffer[index] + SPI_BUFFER_BYTES;
-    digitalWrite(PIN_SPI_SS, LOW);
+    _descriptor_section[DMA_CH_READ].DSTADDR.reg = // set dma read descriptor destination address
+        (uint32_t) &read_buffer[index] + SPI_BUFFER_BYTES;
+
+    digitalWrite(PIN_SPI_SS, LOW); // pull down SS to initiate a transfer
+
+    SERCOM1->SPI.CTRLB.reg = SERCOM_SPI_CTRLB_RXEN; // enable SPI receiving
+    DMAC->CHID.reg = DMA_CH_READ;
+    DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE; // enable dma read channel
     DMAC->CHID.reg = DMA_CH_WRITE;
-    DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE;
+    DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE; // enable dma write channel
+}
+
+
+void SpiDma::write (int index, uint32_t address) {
+
+    while (transfer_active);
+    transfer_active = true;
+
+    write_buffer[index].opcode = SPI_CMD_WRITE; // set packet opcode
+    *((uint32_t*) &write_buffer[index].address) = address; // set packet address
+
+    _descriptor_section[DMA_CH_WRITE].SRCADDR.reg = // set dma descriptor source address
+        (uint32_t) &write_buffer[index] + SPI_BUFFER_BYTES;
+
+    digitalWrite(PIN_SPI_SS, LOW); // pull down SS to initiate a transfer
+
+    SERCOM1->SPI.CTRLB.reg = 0; // disable SPI receiving
+    DMAC->CHID.reg = DMA_CH_WRITE;
+    DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE; // enable the DMA channel
 }
 
 
@@ -56,8 +63,8 @@ void SpiDma::erase () {
 
     int i;
 
-    while (_transfer_active);
-    _transfer_active = true;
+    while (transfer_active);
+    transfer_active = true;
 
     SERCOM1->SPI.CTRLB.reg = 0; // disable receiving
     digitalWrite(PIN_SPI_SS, LOW);
@@ -73,7 +80,7 @@ void SpiDma::erase () {
     }
 
     digitalWrite(PIN_SPI_SS, HIGH);
-    _transfer_active = false;
+    transfer_active = false;
 }
 
 
@@ -83,11 +90,56 @@ void SpiDma::irqHandler () {
     digitalWrite(PIN_SPI_SS, HIGH);
     DMAC->CHID.reg = DMA_CH_WRITE;
     DMAC->CHINTFLAG.reg = 0xFF;
-    _transfer_active = false;
+    transfer_active = false;
 }
 
 
+void SpiDma::printWriteBuffer (int index) {
+
+    int i;
+    char line_buffer[20];
+
+    for (i = 0; i < SPI_BLOCK_SIZE; i++) {
+        sprintf(line_buffer, "%04X", write_buffer[index].data[i]);
+        Serial.print(line_buffer);
+    }
+    Serial.println("");
+}
+
+
+void SpiDma::printReadBuffer (int index) {
+
+    int i;
+    char line_buffer[20];
+
+    for (i = 0; i < SPI_BLOCK_SIZE; i++) {
+        sprintf(line_buffer, "%04X", read_buffer[index].data[i]);
+        Serial.print(line_buffer);
+    }
+    Serial.println("");
+}
+
+
+// void SpiDma::_printBuffer (uint16_t *buffer) {
+//
+//     int i;
+//     char line_buffer[20];
+//
+//     Serial.println("poep");
+//     Serial.println(buffer[i]);
+//     Serial.println("a");
+//
+//     // for (i = 0; i < SPI_BLOCK_SIZE; i++) {
+//     //     sprintf(line_buffer, "%04X", buffer[i]);
+//     //     Serial.print(line_buffer);
+//     // }
+//     // Serial.println("");
+// }
+
+
 void SpiDma::_setupSpi () {
+
+    Serial.println("_setupSpi");
 
     GCLK->GENDIV.bit.ID = GLCK_SPI;             // select generator
     GCLK->GENDIV.bit.DIV = 1;                   //
@@ -110,7 +162,6 @@ void SpiDma::_setupSpi () {
 
     SERCOM1->SPI.BAUD.reg = 2;
     SERCOM1->SPI.CTRLA.reg = SERCOM_SPI_CTRLA_MODE_SPI_MASTER | SERCOM_SPI_CTRLA_DIPO(3);
-    SERCOM1->SPI.CTRLB.reg = SERCOM_SPI_CTRLB_RXEN; // enable receiving
 
     digitalWrite(PIN_SPI_SS, HIGH);
     SERCOM1->SPI.CTRLA.reg |= SERCOM_SPI_CTRLA_ENABLE;
@@ -120,6 +171,8 @@ void SpiDma::_setupSpi () {
 void SpiDma::_setupDma () {
 
     DmacDescriptor dma_descriptor;
+
+    Serial.println("_setupDma");
 
     dma_descriptor.DESCADDR.reg = 0;
 

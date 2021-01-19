@@ -9,55 +9,76 @@
 #include "sine.h"
 #include "biquad.h"
 
-Input input                      = Input();
-SpiDma spiDma                    = SpiDma();
+Input *input;
+SpiDma *spiDma;
 uint32_t led_t0                  = 0;
 bool led_state                   = true;
-bool pwm_state                   = true;
+volatile uint32_t loop_t0        = 0;
+volatile uint32_t loop_t1        = 0;
+
+// button variables
 bool last_btn_state              = false;
 uint32_t input_t0                = 0;
+uint32_t btn_t0                  = 0;
+bool btn_state                   = false;
 
-volatile waveform_t osc_waveform = SQUARE;
+// oscillator variables
+waveform_t osc_waveform          = SQUARE;
+qu16_t osc_setpoint              = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile uint16_t osc_amplitude  = 5000;
-volatile qu16_t osc_setpoint     = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
 volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
-volatile waveform_t lfo_shape    = SQUARE;
-volatile qu8_t lfo_frequency     = float_to_qu8(2.0);
-volatile qu32_t lfo_step         = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
+// lfo variables
+waveform_t lfo_shape             = SQUARE;
+qu8_t lfo_frequency              = float_to_qu8(2.0);
+qu32_t lfo_step                  = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
+qs15_t lfo_depth                 = QS15_ONE / 10;
 volatile qu32_t lfo_phase        = 0;
-volatile qs15_t lfo_depth        = QS15_ONE / 10;    // mod osc frequency by 10%
 
-volatile qu8_t decay_time        = 0;
+// envelope variables
+qu8_t decay_time                 = 0;
+qu32_t decay_step                = 0;
 volatile qu32_t decay_value      = QU32_ONE;
-volatile qu32_t decay_step       = 0;
 
-volatile uint16_t cutoff         = FILTER_MAX;
-volatile qs12_t filter_a[2]      = {0, 0};
-volatile qs12_t filter_b[3]      = {0, 0, 0};
-volatile uint16_t filter_in[3]   = {0, 0, 0};        // unfiltered
-volatile uint16_t filter_out[3]  = {0, 0, 0};        // filtered
+// filter variables
+uint16_t cutoff                  = FILTER_MAX;
+qs12_t filter_a[2]               = {0, 0};
+qs12_t filter_b[3]               = {0, 0, 0};
+uint16_t filter_in[3]            = {0, 0, 0};        // unfiltered
+uint16_t filter_out[3]           = {0, 0, 0};        // filtered
 
-volatile bool btn_state          = false;
-volatile uint16_t sample         = 0;                // buffer one sample to handle interrupts quickly
-volatile uint32_t loop_t0        = 0;
-volatile uint32_t loop_t1        = 0;
+// delay variables
+qu8_t delay_time                 = float_to_qu8(0.5);
+uint32_t delay_blocks            =
+    qu8_to_uint32(mul_qu8(delay_time, float_to_qu8((float) SAMPLE_RATE / SPI_BLOCK_SIZE)));
+qu16_t delay_feedback            = float_to_qu16(0.3);
+uint16_t delay_mix               = 0;               // mixed orginal and delayed sample
+uint32_t buffer_index            = 0;               // current index in the send and resv buffers
+volatile uint32_t read_address   = 0;               // RAM read address
+volatile uint32_t write_address  = RAM_BYTES - (delay_blocks * SPI_BLOCK_BYTES); // RAM write address
+volatile int active_buffer       = 0;               // indexes which of the two sets of buffers the ISR should use
+volatile bool update_buffers     = false;           // flag for the ISR to signal the main loop to update the buffers
+
+
 
 
 void setup () {
-    pinMode(PIN_PWM, OUTPUT);
     pinMode(PIN_LED, OUTPUT);
     pinMode(PIN_I2S_BCLK, OUTPUT);
     pinMode(PIN_I2S_WCLK, OUTPUT);
     pinMode(PIN_I2S_DATA, OUTPUT);
+    pinMode(PIN_SPI_CLK, OUTPUT);
+    pinMode(PIN_SPI_MOSI, OUTPUT);
+    pinMode(PIN_SPI_SS, OUTPUT);
 
     Serial.begin(115200);
-    while (!Serial); // wait for a serial connection (terminal)
+    // while (!Serial); // wait for a serial connection (terminal)
 
-    spiDma.erase();
+    input = new Input();
+    spiDma = new SpiDma();
 
     setupI2S();
     get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
@@ -68,7 +89,7 @@ void setup () {
 
 // IRQ wrapper must be in this file
 void DMAC_Handler () {
-    spiDma.irqHandler();
+    spiDma->irqHandler();
 }
 
 
@@ -167,7 +188,30 @@ void I2S_Handler() {
                     + mul_qs12_int16(filter_b[2], filter_in[2])
                     + mul_qs12_int16(filter_a[0], filter_out[1])
                     + mul_qs12_int16(filter_a[1], filter_out[2]);
+
+    // update delay
+    delay_mix = add_uint16_clip(filter_out[0],
+        mul_qu16_uint16(delay_feedback, spiDma->read_buffer[active_buffer].data[buffer_index]));
+
+    spiDma->write_buffer[active_buffer].data[buffer_index] = delay_mix;
+
+    if (++buffer_index == SPI_BLOCK_SIZE) {
+        buffer_index = 0;
+        active_buffer ^= 1;
+        update_buffers = true;
+    }
 }
+
+
+// void updateBuffers () {
+//
+//     int index = active_buffer ^ 1;
+//
+//     // read
+//     spiDma->
+//
+// }
+
 
 void loop () {
 
@@ -176,54 +220,57 @@ void loop () {
     loop_t0 = millis();
 
     // read button
-    if (digitalRead(PIN_BTN)) {
-        btn_state = false;
-    } else {
-        if (!last_btn_state) {lfo_phase = 0;} // reset phase at start of envelope
-        btn_state = true;
-        decay_value = QU32_ONE;
+    if (loop_t0 - btn_t0 >= BTN_TIME) {
+        btn_t0 = loop_t0;
+        if (digitalRead(PIN_BTN)) {
+            btn_state = false;
+        } else {
+            if (!last_btn_state) {lfo_phase = 0;} // reset phase at start of envelope
+            btn_state = true;
+            decay_value = QU32_ONE;
+        }
+        last_btn_state = btn_state;
     }
-    last_btn_state = btn_state;
 
     // input_t0 = micros();
-    input.update();
+    input->update();
     // Serial.println(micros() - input_t0);
 
     // read frequency pot
-    qu16_t norm_osc_reading = uint16_to_qu16(input.osc_frequency) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
+    qu16_t norm_osc_reading = uint16_to_qu16(input->osc_frequency) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
     norm_osc_reading = mul_qu16(norm_osc_reading, norm_osc_reading); // create quadratic curve
     osc_setpoint = norm_osc_reading * OSC_FREQ_RANGE + uint16_to_qu16(OSC_FREQ_MIN); // calculate frequency setpoint
 
     // read lfo pot
-    qu16_t norm_lfo_reading = uint16_to_qu16(input.lfo_frequency) >> ADC_RES_LOG2;
+    qu16_t norm_lfo_reading = uint16_to_qu16(input->lfo_frequency) >> ADC_RES_LOG2;
     norm_lfo_reading = mul_qu16(norm_lfo_reading, norm_lfo_reading);
     lfo_frequency = mul_qu8(qu16_to_qu8(norm_lfo_reading), float_to_qu8(LFO_FREQ_RANGE))
         + float_to_qu8(LFO_FREQ_MIN);
     lfo_step = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE);
 
     // read lfo mod depth pot
-    qs15_t norm_depth_reading = uint16_to_qs15(input.lfo_depth) >> ADC_RES_LOG2;
+    qs15_t norm_depth_reading = uint16_to_qs15(input->lfo_depth) >> ADC_RES_LOG2;
     lfo_depth = mul_qs15_int16(norm_depth_reading, float_to_qs15(LFO_DEPTH_RANGE))
         + float_to_qs15(LFO_DEPTH_MIN);
 
     // read decay pot
-    qu16_t norm_decay_reading = uint16_to_qu16(input.decay_time) >> ADC_RES_LOG2;
+    qu16_t norm_decay_reading = uint16_to_qu16(input->decay_time) >> ADC_RES_LOG2;
     decay_time = mul_qu8(qu16_to_qu8(norm_decay_reading), float_to_qu8(DECAY_MAX));
     decay_step = QU32_ONE / mul_qu8_uint32(decay_time, SAMPLE_RATE);
 
     // read lfo shape pot
-    if (input.lfo_waveform >= ADC_RES * 3 / 4) {
+    if (input->lfo_waveform >= ADC_RES * 3 / 4) {
         lfo_shape = SQUARE;
-    } else if (input.lfo_waveform >= ADC_RES / 2) {
+    } else if (input->lfo_waveform >= ADC_RES / 2) {
         lfo_shape = SAW;
-    } else if (input.lfo_waveform >= ADC_RES / 4) {
+    } else if (input->lfo_waveform >= ADC_RES / 4) {
         lfo_shape = TRIANGLE;
     } else {
         lfo_shape = SINE;
     }
 
     cutoff = (uint16_t)
-        ((((uint32_t) input.filter_cutoff * FILTER_RANGE) >> ADC_RES_LOG2) + FILTER_MIN);
+        ((((uint32_t) input->filter_cutoff * FILTER_RANGE) >> ADC_RES_LOG2) + FILTER_MIN);
     get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
 
     loop_t1 = millis() - loop_t0;
