@@ -17,7 +17,7 @@ volatile uint32_t loop_t0        = 0;
 volatile uint32_t loop_t1        = 0;
 
 // button variables
-bool last_btn_state              = false;
+uint8_t last_btn_state           = 0;
 uint32_t input_t0                = 0;
 uint32_t btn_t0                  = 0;
 bool btn_state                   = false;
@@ -45,6 +45,7 @@ volatile qu32_t decay_value      = QU32_ONE;
 
 // filter variables
 uint16_t cutoff                  = FILTER_MAX;
+
 qs12_t filter_a[2]               = {0, 0};
 qs12_t filter_b[3]               = {0, 0, 0};
 uint16_t filter_in[3]            = {0, 0, 0};        // unfiltered
@@ -54,25 +55,35 @@ uint16_t filter_out[3]           = {0, 0, 0};        // filtered
 qu8_t delay_time                 = float_to_qu8(0.5);
 uint32_t delay_blocks            =
     qu8_to_uint32(mul_qu8(delay_time, float_to_qu8((float) SAMPLE_RATE / SPI_BLOCK_SIZE)));
-qu16_t delay_feedback            = float_to_qu16(0.3);
+qu16_t delay_mix_feedback        = float_to_qu16(0.3);
+qu16_t delay_mix_original        = float_to_qu16(0.7);
 uint16_t delay_mix               = 0;               // mixed orginal and delayed sample
 uint32_t buffer_index            = 0;               // current index in the send and resv buffers
 volatile uint32_t read_address   = 0;               // RAM read address
-volatile uint32_t write_address  = RAM_BYTES - (delay_blocks * SPI_BLOCK_BYTES); // RAM write address
+volatile int32_t write_address   = RAM_BYTES - (delay_blocks * SPI_BLOCK_BYTES); // RAM write address
 volatile int active_buffer       = 0;               // indexes which of the two sets of buffers the ISR should use
-volatile bool update_buffers     = false;           // flag for the ISR to signal the main loop to update the buffers
-
-
-
+volatile dma_state_t dma_state   = DMA_IDLE;        // flag for the ISR to signal the main loop to update the buffers
 
 void setup () {
-    pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_ADC_CH0, INPUT);
+    pinMode(PIN_ADC_CH1, INPUT);
+    pinMode(PIN_SREG_DATA, INPUT);
+    pinMode(PIN_BOARD_LED, OUTPUT);
+    pinMode(PIN_LFO_LED, OUTPUT);
     pinMode(PIN_I2S_BCLK, OUTPUT);
     pinMode(PIN_I2S_WCLK, OUTPUT);
     pinMode(PIN_I2S_DATA, OUTPUT);
     pinMode(PIN_SPI_CLK, OUTPUT);
     pinMode(PIN_SPI_MOSI, OUTPUT);
     pinMode(PIN_SPI_SS, OUTPUT);
+    pinMode(PIN_SREG_CLK, OUTPUT);
+    pinMode(PIN_SREG_LATCH, OUTPUT);
+    pinMode(PIN_MUX_S0, OUTPUT);
+    pinMode(PIN_MUX_S1, OUTPUT);
+    pinMode(PIN_MUX_S2, OUTPUT);
+
+    digitalWrite(PIN_SREG_LATCH, HIGH);
+    digitalWrite(PIN_SREG_CLK, LOW);
 
     Serial.begin(115200);
     // while (!Serial); // wait for a serial connection (terminal)
@@ -83,6 +94,13 @@ void setup () {
     setupI2S();
     get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
 
+    for (uint16_t i = 0; i < SPI_BLOCK_SIZE; i++) {
+        spiDma->write_buffer[0].data[i] = i;
+        spiDma->write_buffer[1].data[i] = i;
+        spiDma->read_buffer[0].data[i] = 0;
+        spiDma->read_buffer[1].data[i] = 0;
+    }
+
     Serial.println("Initialization completed");
 }
 
@@ -90,6 +108,18 @@ void setup () {
 // IRQ wrapper must be in this file
 void DMAC_Handler () {
     spiDma->irqHandler();
+
+    if (dma_state == DMA_WRITE_B) {
+        // Serial.println('a');
+        dma_state = DMA_READ_A;
+    } else if (dma_state == DMA_READ_B) {
+        // Serial.println('b');
+        read_address = (read_address + SPI_BLOCK_BYTES) & (RAM_BYTES - 1);
+        write_address = (write_address + SPI_BLOCK_BYTES) & (RAM_BYTES - 1);
+        dma_state = DMA_IDLE;
+    } else {
+        Serial.println("E1");
+    }
 }
 
 
@@ -138,8 +168,11 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
 void I2S_Handler() {
     // write sample in compact stereo mode, interrupt flag is cleared automatically
-    //I2S->DATA[0].reg = btn_state ? (uint32_t) sample << 16 | sample : 0UL;
     I2S->DATA[0].reg = (uint32_t) filter_out[0] << 16 | filter_out[0];
+    // I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
+
+    // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
+    // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
 
     // shift sample buffers
     filter_in[2] = filter_in[1];
@@ -190,100 +223,159 @@ void I2S_Handler() {
                     + mul_qs12_int16(filter_a[1], filter_out[2]);
 
     // update delay
-    delay_mix = add_uint16_clip(filter_out[0],
-        mul_qu16_uint16(delay_feedback, spiDma->read_buffer[active_buffer].data[buffer_index]));
+    delay_mix = add_uint16_clip(
+        mul_qu16_uint16(delay_mix_original, filter_out[0]),
+        mul_qu16_uint16(delay_mix_feedback, spiDma->read_buffer[active_buffer].data[buffer_index]));
 
-    spiDma->write_buffer[active_buffer].data[buffer_index] = delay_mix;
+    // spiDma->write_buffer[active_buffer].data[buffer_index] = delay_mix;
+    // spiDma->write_buffer[active_buffer].data[buffer_index] = filter_out[0];
 
-    if (++buffer_index == SPI_BLOCK_SIZE) {
-        buffer_index = 0;
-        active_buffer ^= 1;
-        update_buffers = true;
-    }
+    // if (++buffer_index == SPI_BLOCK_SIZE) {
+    //     buffer_index = 0;
+    //     active_buffer = 1 - active_buffer;
+    //     if (dma_state != DMA_IDLE) {
+    //         Serial.println("E2");
+    //     } else {
+    //         dma_state = DMA_WRITE_A;
+    //     }
+    // }
 }
-
-
-// void updateBuffers () {
-//
-//     int index = active_buffer ^ 1;
-//
-//     // read
-//     spiDma->
-//
-// }
 
 
 void loop () {
 
+    int i;
     char stringBuffer[100];
 
     loop_t0 = millis();
-
-    // read button
-    if (loop_t0 - btn_t0 >= BTN_TIME) {
-        btn_t0 = loop_t0;
-        if (digitalRead(PIN_BTN)) {
-            btn_state = false;
-        } else {
-            if (!last_btn_state) {lfo_phase = 0;} // reset phase at start of envelope
-            btn_state = true;
-            decay_value = QU32_ONE;
-        }
-        last_btn_state = btn_state;
-    }
 
     // input_t0 = micros();
     input->update();
     // Serial.println(micros() - input_t0);
 
-    // read frequency pot
-    qu16_t norm_osc_reading = uint16_to_qu16(input->osc_frequency) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
+    // read buttons
+    if (loop_t0 - btn_t0 >= BTN_TIME) {
+        btn_t0 = loop_t0;
+
+        if (input->button_state == 0) {
+            btn_state = false;
+        } else {
+            btn_state = true;
+            decay_value = QU32_ONE;
+        }
+
+        if ((input->button_state & 0x40) & (last_btn_state ^ 0x40)) {
+            lfo_shape = SQUARE;
+        } else if ((input->button_state & 0x80) & (last_btn_state ^ 0x80)) {
+            lfo_shape = SAW;
+        } else if ((input->button_state & 0x01) & (last_btn_state ^ 0x01)) {
+            lfo_shape = TRIANGLE;
+        } else if ((input->button_state & 0x04) & (last_btn_state ^ 0x04)) {
+            lfo_shape = SINE;
+        }
+
+        last_btn_state = input->button_state;
+    }
+
+    // calculate frequency
+    qu16_t norm_osc_reading = uint16_to_qu16(input->pot_data.osc_frequency) >> ADC_RES_LOG2; // normalize reading to [0 - 1)
     norm_osc_reading = mul_qu16(norm_osc_reading, norm_osc_reading); // create quadratic curve
     osc_setpoint = norm_osc_reading * OSC_FREQ_RANGE + uint16_to_qu16(OSC_FREQ_MIN); // calculate frequency setpoint
 
-    // read lfo pot
-    qu16_t norm_lfo_reading = uint16_to_qu16(input->lfo_frequency) >> ADC_RES_LOG2;
+    // calculate lfo frequency
+    qu16_t norm_lfo_reading = uint16_to_qu16(input->pot_data.lfo_frequency) >> ADC_RES_LOG2;
     norm_lfo_reading = mul_qu16(norm_lfo_reading, norm_lfo_reading);
     lfo_frequency = mul_qu8(qu16_to_qu8(norm_lfo_reading), float_to_qu8(LFO_FREQ_RANGE))
         + float_to_qu8(LFO_FREQ_MIN);
     lfo_step = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE);
 
-    // read lfo mod depth pot
-    qs15_t norm_depth_reading = uint16_to_qs15(input->lfo_depth) >> ADC_RES_LOG2;
+    // calculate lfo mod depth coefficient
+    qs15_t norm_depth_reading = uint16_to_qs15(input->pot_data.lfo_depth) >> ADC_RES_LOG2;
     lfo_depth = mul_qs15_int16(norm_depth_reading, float_to_qs15(LFO_DEPTH_RANGE))
         + float_to_qs15(LFO_DEPTH_MIN);
 
-    // read decay pot
-    qu16_t norm_decay_reading = uint16_to_qu16(input->decay_time) >> ADC_RES_LOG2;
+    // calculate decay coefficient
+    qu16_t norm_decay_reading = uint16_to_qu16(input->pot_data.decay_time) >> ADC_RES_LOG2;
     decay_time = mul_qu8(qu16_to_qu8(norm_decay_reading), float_to_qu8(DECAY_MAX));
-    decay_step = QU32_ONE / mul_qu8_uint32(decay_time, SAMPLE_RATE);
-
-    // read lfo shape pot
-    if (input->lfo_waveform >= ADC_RES * 3 / 4) {
-        lfo_shape = SQUARE;
-    } else if (input->lfo_waveform >= ADC_RES / 2) {
-        lfo_shape = SAW;
-    } else if (input->lfo_waveform >= ADC_RES / 4) {
-        lfo_shape = TRIANGLE;
+    if (decay_time == 0) {
+        decay_step = QU32_ONE;
     } else {
-        lfo_shape = SINE;
+        decay_step = QU32_ONE / mul_qu8_uint32(decay_time, SAMPLE_RATE);
     }
 
-    cutoff = (uint16_t)
-        ((((uint32_t) input->filter_cutoff * FILTER_RANGE) >> ADC_RES_LOG2) + FILTER_MIN);
+    // calculate filter coefficients
+    cutoff = (uint16_t) ((((uint32_t) input->pot_data.filter_cutoff * FILTER_RANGE)
+        >> ADC_RES_LOG2) + FILTER_MIN);
     get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
+
+    // // update delay buffers
+    // // the rest is handled in the dma ISR
+    // if (dma_state == DMA_IDLE) {
+    //     dma_state = DMA_WRITE_B;
+    //     spiDma->write(0, write_address);
+    // } else if (dma_state == DMA_READ_A) {
+    //     dma_state = DMA_READ_B;
+    //     spiDma->read(0, read_address);
+    // }
 
     loop_t1 = millis() - loop_t0;
 
     // blink led at 2 Hz
     int t = millis();
+
+    // // Serial.println(dma_state);
+    // Serial.print(read_address, HEX);
+    // Serial.print(" ");
+    // Serial.println(write_address, HEX);
+
     if (t - led_t0 > MAIN_LOOP_MS) {
 
         digitalWrite(PIN_LED, led_state);
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        // Serial.println(filter_out[0]);
+        // input->printPots();
+        Serial.println("");
+        Serial.println(input->button_state, HEX);
+        Serial.println(input->osc_waveform);
+        Serial.println(btn_state);
+        Serial.println(lfo_shape);
+        Serial.println(decay_time / 256.0);
+
+        // Serial.println(dma_state);
+        //
+        // DMAC->CHID.reg = DMA_CH_READ;
+        // sprintf(stringBuffer, "%04X %04X", SERCOM1->SPI.STATUS.reg, SERCOM1->SPI.INTFLAG.reg);
+        // Serial.println(stringBuffer);
+        //
+        // spiDma->printDmaDescriptor(1, true);
+        // spiDma->printWriteBuffer(0);
+        // spiDma->printReadBuffer(0);
         // Serial.println("");
+
+        // spiDma->printBtCount(0);
+
+        // Serial.print("write ");
+        // for (i = 0; i < 16; i++) {
+        //     sprintf(stringBuffer, "%04X ", spiDma->write_buffer[0].data[i]);
+        //     Serial.print(stringBuffer);
+        // }
+        // Serial.print(" ... ");
+        // for (i = 1008; i < 1024; i++) {
+        //     sprintf(stringBuffer, "%04X ", spiDma->write_buffer[0].data[i]);
+        //     Serial.print(stringBuffer);
+        // }
+        // Serial.println("");
+        // Serial.print("read  ");
+        // for (i = 0; i < 16; i++) {
+        //     sprintf(stringBuffer, "%04X ", spiDma->read_buffer[0].data[i]);
+        //     Serial.print(stringBuffer);
+        // }
+        // Serial.print(" ... ");
+        // for (i = 1008; i < 1024; i++) {
+        //     sprintf(stringBuffer, "%04X ", spiDma->read_buffer[0].data[i]);
+        //     Serial.print(stringBuffer);
+        // }
+        // Serial.println("\n");
     }
 }

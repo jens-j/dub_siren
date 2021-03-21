@@ -4,43 +4,89 @@
 #include "input.h"
 
 
-Input::Input () {
+pot_route_t POT_ROUTING[10] = {
+    {5, 1}, // POT_OSC_FREQ
+    {5, 2}, // POT_LFO_DEPTH
+    {5, 3}, // POT_LFO_FREQ
+    {6, 7}, // POT_RELEASE
+    {6, 6}, // POT_FILTER_FREQ
+    {6, 5}, // POT_FILTER_RES
+    {6, 0}, // POT_FILTER_SWEEP
+    {6, 3}, // POT_DELAY_WET
+    {6, 4}, // POT_DELAY_TIME
+    {6, 2} // POT_DELAY_FB
+};
 
+
+Input::Input () {
     _setupAdc();
     update();
 }
 
 void Input::update () {
 
-    int new_osc_frequency = this->_readAdc(ADC_CH_OSC);
-    if (abs(osc_frequency - new_osc_frequency) > POT_DEAD_ZONE) {
-        osc_frequency = new_osc_frequency;
+    int i;
+    sreg_data_t sreg_data;
+    uint8_t button_data;
+    uint8_t encoder_data;
+    uint16_t adc_data;
+    uint16_t *pot_data_p = (uint16_t*) &pot_data;
+
+    // read buttons and encoder
+    sreg_data = _readShiftRegister();
+    button_state = sreg_data.button_data;
+    if (sreg_data.encoder_data & 0x08) {osc_waveform = SQUARE;}
+    else if (sreg_data.encoder_data & 0x04) {osc_waveform = SAW;}
+    else if (sreg_data.encoder_data & 0x01) {osc_waveform = TRIANGLE;}
+    else {osc_waveform = SINE;}
+
+    // read the pots
+    for (i = 0; i < N_POTS; i++) {
+        digitalWrite(PIN_MUX_S0, POT_ROUTING[i].mux_setting & 0x1);
+        digitalWrite(PIN_MUX_S1, POT_ROUTING[i].mux_setting & 0x2);
+        digitalWrite(PIN_MUX_S2, POT_ROUTING[i].mux_setting & 0x4);
+        adc_data = _readAdc(POT_ROUTING[i].adc_channel);
+        if (abs(*(pot_data_p + i) - adc_data) > POT_DEAD_ZONE) {
+            *(pot_data_p + i) = adc_data;
+        }
+    }
+}
+
+sreg_data_t Input::_readShiftRegister () {
+
+    int i;
+    sreg_data_t data;
+    uint16_t *data_p = (uint16_t*) &data;
+
+    digitalWrite(PIN_SREG_LATCH, LOW);
+    digitalWrite(PIN_SREG_LATCH, HIGH);
+
+    *data_p = digitalRead(PIN_SREG_DATA);
+
+    for (i = 1; i < 16; i++) {
+        digitalWrite(PIN_SREG_CLK, HIGH);
+        digitalWrite(PIN_SREG_CLK, LOW);
+        *data_p = (*data_p << 1) + digitalRead(PIN_SREG_DATA);
     }
 
-    int new_lfo_waveform = this->_readAdc(ADC_CH_SHAPE);
-    if (abs(lfo_waveform - new_lfo_waveform) > POT_DEAD_ZONE) {
-        lfo_waveform = new_lfo_waveform;
-    }
+    // Serial.println(*data_p, HEX);
 
-    int new_lfo_frequency = this->_readAdc(ADC_CH_LFO);
-    if (abs(lfo_frequency - new_lfo_frequency) > POT_DEAD_ZONE) {
-        lfo_frequency = new_lfo_frequency;
-    }
+    return data;
+}
 
-    int new_lfo_depth = this->_readAdc(ADC_CH_DEPTH);
-    if (abs(lfo_depth - new_lfo_depth) > POT_DEAD_ZONE) {
-        lfo_depth = new_lfo_depth;
-    }
+void Input::printPots () {
+    char stringBuffer[100];
 
-    int new_filter_cutoff = this->_readAdc(ADC_CH_FILTER);
-    if (abs(filter_cutoff - new_filter_cutoff) > POT_DEAD_ZONE) {
-        filter_cutoff = new_filter_cutoff;
-    }
-
-    int new_decay_time = this->_readAdc(ADC_CH_DECAY);
-    if (abs(decay_time - new_decay_time) > POT_DEAD_ZONE) {
-        decay_time = new_decay_time;
-    }
+    sprintf(stringBuffer, "osc_frequency = %d", pot_data.osc_frequency);
+    Serial.println(stringBuffer);
+    sprintf(stringBuffer, "lfo_depth     = %d", pot_data.lfo_depth);
+    Serial.println(stringBuffer);
+    sprintf(stringBuffer, "lfo_frequency = %d", pot_data.lfo_frequency);
+    Serial.println(stringBuffer);
+    sprintf(stringBuffer, "decay_time    = %d", pot_data.decay_time);
+    Serial.println(stringBuffer);
+    sprintf(stringBuffer, "filter_cutoff = %d", pot_data.filter_cutoff);
+    Serial.println(stringBuffer);
 }
 
 uint16_t Input::_readAdc (int channel) {
@@ -63,18 +109,10 @@ void Input::_setupAdc () {
     GCLK->CLKCTRL.bit.GEN = GCLK_ADC;           // select generator
     GCLK->CLKCTRL.bit.CLKEN = 1;                // enable
 
-    PORT->Group[1].PINCFG[2].bit.PMUXEN = 1;    // mux ADC on PB02 / pin A1
-    PORT->Group[1].PINCFG[3].bit.PMUXEN = 1;    // mux ADC on PB03 / pin A2
-    PORT->Group[0].PINCFG[4].bit.PMUXEN = 1;    // mux ADC on PA04 / pin A3
     PORT->Group[0].PINCFG[5].bit.PMUXEN = 1;    // mux ADC on PA05 / pin A4
     PORT->Group[0].PINCFG[6].bit.PMUXEN = 1;    // mux ADC on PA06 / pin A5
-    PORT->Group[0].PINCFG[3].bit.PMUXEN = 1;    // mux VREFA on PA03 / pin AREF
-    PORT->Group[1].PMUX[1].bit.PMUXE = 1;       // select AN10 (group B) for PB02
-    PORT->Group[1].PMUX[1].bit.PMUXO = 1;       // select AN11 (group B) for PB03
-    PORT->Group[0].PMUX[2].bit.PMUXE = 1;       // select AN04 (group B) for PA04
     PORT->Group[0].PMUX[2].bit.PMUXO = 1;       // select AN05 (group B) for PA05
     PORT->Group[0].PMUX[3].bit.PMUXE = 1;       // select AN06 (group B) for PA06
-    PORT->Group[0].PMUX[1].bit.PMUXO = 1;       // select VREFA (group B) for PA03
 
     ADC->CTRLA.bit.ENABLE = 0;                  // disable peripheral before starting clock
     PM->APBCMASK.bit.ADC_ = 1;                  // start APBC clock

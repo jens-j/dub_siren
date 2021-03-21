@@ -1,14 +1,10 @@
 #ifndef __DUBSIREN_H
 #define __DUBSIREN_H
 
-#define PIN_LED         32
-#define PIN_PWM         5
-#define PIN_BTN         6
-#define PIN_OSC_POT     A1
-#define PIN_LFO_DEPTH   A2
-#define PIN_LFO_POT     A3
-#define PIN_LFO_SHAPE   A4
-#define PIN_DECAY       A5
+#define PIN_BOARD_LED   32
+#define PIN_LFO_LED     6
+#define PIN_ADC_CH0     A5
+#define PIN_ADC_CH1     A4
 #define PIN_I2S_BCLK    2
 #define PIN_I2S_WCLK    3
 #define PIN_I2S_DATA    A6
@@ -16,13 +12,12 @@
 #define PIN_SPI_MISO    10
 #define PIN_SPI_MOSI    8
 #define PIN_SPI_SS      7
-
-#define ADC_CH_LFO      4
-#define ADC_CH_SHAPE    5
-#define ADC_CH_FILTER   5
-#define ADC_CH_DECAY    6
-#define ADC_CH_OSC      10
-#define ADC_CH_DEPTH    11
+#define PIN_SREG_CLK    15
+#define PIN_SREG_DATA   17
+#define PIN_SREG_LATCH  16
+#define PIN_MUX_S0      5
+#define PIN_MUX_S1      4
+#define PIN_MUX_S2      1
 
 #define GLCK_I2S        3
 #define GCLK_ADC        4
@@ -52,16 +47,21 @@
 #define FILTER_MIN      500 // lower leads to unstable filter due to coefficient rounding
 #define FILTER_MAX      OSC_FREQ_MAX
 #define FILTER_RANGE    (FILTER_MAX - FILTER_MIN)
+#define RESONANCE_MIN   1 // lower leads to unstable filter due to coefficient rounding
+#define RESONANCE_MAX   20
+#define RESONANCE_RANGE (RESONANCE_MAX - RESONANCE_MIN)
 
 #define DECAY_MAX       5.0 // seconds
 
 #define PI              3.141593
 
 enum waveform_t {SQUARE, SAW, TRIANGLE, SINE};
+enum dma_state_t {DMA_IDLE, DMA_WRITE_A, DMA_WRITE_B, DMA_READ_A, DMA_READ_B};
 
-inline uint16_t add_uint16_clip(uint16_t x, uint16_t y) {
-    uint32_t z = (uint32_t) x * y;
-    return z & 0x10000 ? 0xFFFF : (uint16_t) z;
-}
+
+
+
+
+
 
 #endif

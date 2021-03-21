@@ -9,7 +9,7 @@
 #define RAM_SAMPLES         (RAM_BYTES >> 1)
 #define RAM_BLOCKS          (RAM_BYTES / SPI_BLOCK_SIZE)
 
-#define SPI_BLOCK_SIZE      1024
+#define SPI_BLOCK_SIZE      64
 #define SPI_BLOCK_BYTES     (SPI_BLOCK_SIZE << 1)
 #define SPI_BUFFER_BYTES    (SPI_BLOCK_BYTES + 5)
 
@@ -27,11 +27,12 @@ typedef struct __attribute__((packed)) spi_buffer_s {
 } spi_buffer_t;
 
 
+void printDataBuffer (uint16_t *buffer);
+
 class SpiDma {
 private:
     void _setupSpi ();
     void _setupDma ();
-    void _printBuffer (uint16_t *buffer);
 public:
     spi_buffer_t read_buffer[2]; // the opcode and address are not used but the dma will return bytes when they are written
     spi_buffer_t write_buffer[2]; // also, the compiler does not allow making these volatile
@@ -46,6 +47,8 @@ public:
     //void printWriteBuffer (int index) {_printBuffer(&write_buffer[index].data[0]);}
     void printReadBuffer (int index);
     void printWriteBuffer (int index);
+    void printBtCount (int channel);
+    void printDmaDescriptor (int channel, bool writeback);
 };
 
 #endif

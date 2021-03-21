@@ -33,6 +33,11 @@ inline qu32_t float_to_qu32 (float x) {return (qu32_t) (x * 0x100000000);}
 inline qs15_t qs_invert (qs15_t x) {return (~x) + 1;}
 
 
+inline uint16_t add_uint16_clip(uint16_t x, uint16_t y) {
+    uint32_t z = (uint32_t) x + y;
+    return z & 0x10000 ? 0xFFFF : (uint16_t) z;
+}
+
 // multiply two qu16_t values
 inline qu16_t mul_qu16 (qu16_t x, qu16_t y) {
 
