@@ -159,37 +159,63 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
         // the phase to amplitude ratio has a gain of two. Because of the fixed point limits of
         // [-1, 1) a multiplication could overflow. Therefore the phase is just subtracted twice.
-        case SAW:
+        case SAW_DOWN:
            return QS15_ONE - qu32_to_qs15(phase) - qu32_to_qs15(phase);
 
-        case TRIANGLE:
+        case SAW_UP:
+           return QS15_MINUS_ONE + qu32_to_qs15(phase) + qu32_to_qs15(phase);
 
+        case SAW_WOOP:
+            // if (phase < QU32_ONE / 2) {
+            //     local_phase = qu32_to_qs15(phase);
+            //     return QS15_MINUS_ONE + local_phase + local_phase + local_phase;
+            // } else { // amp = 1.375 * phase - 0.375 (with phase normalized to 0.5..1)
+            //     local_phase = qu32_to_qs15(phase) - QS15_ONE / 2;
+            //     return QS15_MINUS_HALF + local_phase + local_phase + local_phase;
+            // }
+
+            // if (phase < QU32_ONE / 4) {
+            //     local_phase = qu32_to_qs15(phase);
+            //     return QS15_MINUS_ONE + local_phase + local_phase;
+            // } else {
+            //     local_phase = qu32_to_qs15(phase) - QS15_ONE / 4;
+            //     return QS15_MINUS_HALF + QS15_MINUS_QUARTER + local_phase + local_phase;
+            // }
+
+            if (phase < QU32_ONE / 3) {
+                local_phase = qu32_to_qs15(phase);
+            } else { // amp = 1.375 * phase - 0.375 (with phase normalized to 0.5..1)
+                local_phase = qu32_to_qs15(phase) - QS15_ONE / 3;
+            }
+            return QS15_MINUS_ONE + local_phase + local_phase + local_phase;
+
+        case TRIANGLE:
             if (phase < QU32_ONE / 2) {
                 local_phase = qu32_to_qs15(phase);
                 return QS15_MINUS_ONE + (local_phase << 2);
             } else {
-                local_phase = (qu32_to_qs15(phase) - (QS15_ONE >> 1)); // [0.5 - 1] -> [0 - 1]
+                local_phase = (qu32_to_qs15(phase) - (QS15_ONE / 3)); // [0.5 - 1] -> [0 - 1]
                 return QS15_ONE - (local_phase << 2);
             }
 
         case SINE:
             return getSineAmplitude((qs15_t*) &SINE_TABLE, phase);
 
-        case SINE2:
+        case SINE_H3:
             return getSineAmplitude((qs15_t*) &SINE_TABLE2, phase);
 
-        case SQUARE2:
+        case SQUARE_ALT:
             if (phase >= QU32_ONE / 2) {
-                return 0;
+                return QS15_MINUS_ONE;
             } else {
                 return getAmplitude(SQUARE, phase << 3);
             }
 
-        case SAW2:
+        case SAW_ALT:
             if (phase >= QU32_ONE / 2) {
-                return 0;
+                return QS15_MINUS_ONE;
             } else {
-                return getAmplitude(SAW, phase << 3);
+                return getAmplitude(SAW_DOWN, phase << 3);
             }
     }
 }
@@ -301,25 +327,28 @@ void loop () {
         }
 
         if ((input->button_state & 0x40) & (last_btn_state ^ 0x40)) {
-            lfo_shape = SQUARE;
-            lfo_phase = 0;
-        } else if ((input->button_state & 0x80) & (last_btn_state ^ 0x80)) {
-            lfo_shape = SAW;
-            lfo_phase = 0;
-        } else if ((input->button_state & 0x01) & (last_btn_state ^ 0x01)) {
-            lfo_shape = TRIANGLE;
-            lfo_phase = 0;
-        } else if ((input->button_state & 0x04) & (last_btn_state ^ 0x04)) {
             lfo_shape = SINE;
             lfo_phase = 0;
+        } else if ((input->button_state & 0x80) & (last_btn_state ^ 0x80)) {
+            lfo_shape = SQUARE;
+            lfo_phase = 0;
+        } else if ((input->button_state & 0x01) & (last_btn_state ^ 0x01)) {
+            lfo_shape = SAW_DOWN;
+            lfo_phase = 0;
+        } else if ((input->button_state & 0x04) & (last_btn_state ^ 0x04)) {
+            lfo_shape = SAW_UP;
+            lfo_phase = 0;
         } else if ((input->button_state & 0x20) & (last_btn_state ^ 0x20)) {
-            lfo_shape = SQUARE2;
+            lfo_shape = SINE_H3;
             lfo_phase = 0;
         } else if ((input->button_state & 0x10) & (last_btn_state ^ 0x10)) {
-            lfo_shape = SAW2;
+            lfo_shape = SQUARE_ALT;
             lfo_phase = 0;
         } else if ((input->button_state & 0x08) & (last_btn_state ^ 0x08)) {
-            lfo_shape = SINE2;
+            lfo_shape = SAW_ALT;
+            lfo_phase = 0;
+        } else if ((input->button_state & 0x02) & (last_btn_state ^ 0x02)) {
+            lfo_shape = SAW_WOOP;
             lfo_phase = 0;
         }
 
@@ -385,14 +414,16 @@ void loop () {
         led_t0 += MAIN_LOOP_MS;
 
         Serial.println("");
-        Serial.println(input->pot_data.filter_cutoff);
-        Serial.println(cutoff);
-        Serial.println(resonance);
-        Serial.println(filter_a[0]);
-        Serial.println(filter_a[1]);
-        Serial.println(filter_b[0]);
-        Serial.println(filter_b[1]);
-        Serial.println(filter_b[2]);
+        Serial.println(qu16_to_float(osc_setpoint));
+        Serial.println(qu16_to_float(osc_frequency));
+        // Serial.println(input->pot_data.filter_cutoff);
+        // Serial.println(cutoff);
+        // Serial.println(resonance);
+        // Serial.println(filter_a[0]);
+        // Serial.println(filter_a[1]);
+        // Serial.println(filter_b[0]);
+        // Serial.println(filter_b[1]);
+        // Serial.println(filter_b[2]);
 
         // Serial.println("");
         // Serial.println(input->button_state, HEX);

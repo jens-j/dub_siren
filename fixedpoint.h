@@ -3,11 +3,13 @@
 #ifndef __FIXEDXPOINT_H
 #define __FIXEDXPOINT_H
 
-#define QS12_ONE        0x00000fffUL
-#define QS15_ONE        0x00007fffUL
-#define QS15_MINUS_ONE  0xffff8000UL
-#define QU16_ONE        0x0000ffffUL
-#define QU32_ONE        0xffffffffUL
+#define QS12_ONE            0x00000fffUL
+#define QS15_ONE            0x00007fffUL
+#define QS15_MINUS_ONE      0xffff8000UL
+#define QS15_MINUS_HALF     0xffffc000UL
+#define QS15_MINUS_QUARTER  0xffffe000UL
+#define QU16_ONE            0x0000ffffUL
+#define QU32_ONE            0xffffffffUL
 
 typedef uint32_t qu8_t;  // unsigned [0 - 256) with 8 bit fractional precision
 typedef int32_t qs12_t;  // signed fixed point [-8, -8)

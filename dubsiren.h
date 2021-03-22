@@ -32,7 +32,7 @@
 #define BTN_TIME        20 // ms
 
 #define OSC_FREQ_MIN    20.0
-#define OSC_FREQ_MAX    8000.0
+#define OSC_FREQ_MAX    2000.0
 #define OSC_FREQ_RANGE  (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX     32767 // 16 bit signed
 #define GLIDE_RATE      (QS15_ONE >> 2) // frequency change rate in Hz/sample
@@ -55,7 +55,7 @@
 
 #define PI              3.141593
 
-enum waveform_t {SQUARE, SAW, TRIANGLE, SINE, SQUARE2, SAW2, SINE2};
+enum waveform_t {SQUARE, SAW_DOWN, SAW_UP, TRIANGLE, SINE, SQUARE_ALT, SAW_ALT, SINE_H3, SAW_WOOP};
 enum dma_state_t {DMA_IDLE, DMA_WRITE_A, DMA_WRITE_B, DMA_READ_A, DMA_READ_B};
 
 

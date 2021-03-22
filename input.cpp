@@ -38,9 +38,13 @@ void Input::update () {
     sreg_data = _readShiftRegister();
     button_state = sreg_data.button_data;
     if (sreg_data.encoder_data & 0x08) {osc_waveform = SQUARE;}
-    else if (sreg_data.encoder_data & 0x04) {osc_waveform = SAW;}
-    else if (sreg_data.encoder_data & 0x01) {osc_waveform = TRIANGLE;}
-    else if (sreg_data.encoder_data != 0) {osc_waveform = SINE;}
+    else if (sreg_data.encoder_data & 0x04) {osc_waveform = SAW_DOWN;}
+    else if (sreg_data.encoder_data & 0x01) {osc_waveform = SAW_UP;}
+    else if (sreg_data.encoder_data & 0x02) {osc_waveform = SAW_WOOP;}
+    else if (sreg_data.encoder_data & 0x80) {osc_waveform = SINE;}
+    else if (sreg_data.encoder_data & 0x10) {osc_waveform = SINE_H3;}
+    else if (sreg_data.encoder_data & 0x40) {osc_waveform = SQUARE_ALT;}
+    else if (sreg_data.encoder_data & 0x20) {osc_waveform = SAW_ALT;}
 
     // read the pots
     for (i = 0; i < N_POTS; i++) {
