@@ -23,10 +23,9 @@ uint32_t btn_t0                  = 0;
 bool btn_state                   = false;
 
 // oscillator variables
-waveform_t osc_waveform          = SQUARE;
 qu16_t osc_setpoint              = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
-volatile uint16_t osc_amplitude  = 5000;
+volatile uint16_t osc_amplitude  = 2000;
 volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
@@ -39,15 +38,18 @@ qs15_t lfo_depth                 = QS15_ONE / 10;
 volatile qu32_t lfo_phase        = 0;
 
 // envelope variables
-qu8_t decay_time                 = 0;
-qu32_t decay_step                = 0;
-volatile qu32_t decay_value      = QU32_ONE;
+qu8_t release_time               = 0;
+qu32_t release_step              = 0;
+volatile qu32_t release_value      = QU32_ONE;
 
 // filter variables
 uint16_t cutoff                  = FILTER_MAX;
+qu8_t resonance                  = RESONANCE_MIN;
 
 qs12_t filter_a[2]               = {0, 0};
 qs12_t filter_b[3]               = {0, 0, 0};
+qs12_t filter_a_f[2]             = {0, 0};
+qs12_t filter_b_f[3]             = {0, 0, 0};
 uint16_t filter_in[3]            = {0, 0, 0};        // unfiltered
 uint16_t filter_out[3]           = {0, 0, 0};        // filtered
 
@@ -92,7 +94,7 @@ void setup () {
     spiDma = new SpiDma();
 
     setupI2S();
-    get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
+    get_lpf_coeffs(cutoff, qu8_to_uint16(resonance), filter_a, filter_b);
 
     for (uint16_t i = 0; i < SPI_BLOCK_SIZE; i++) {
         spiDma->write_buffer[0].data[i] = i;
@@ -169,6 +171,7 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 void I2S_Handler() {
     // write sample in compact stereo mode, interrupt flag is cleared automatically
     I2S->DATA[0].reg = (uint32_t) filter_out[0] << 16 | filter_out[0];
+    // I2S->DATA[0].reg = (uint32_t) filter_in[0] << 16 | filter_in[0];
     // I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
 
     // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
@@ -186,10 +189,10 @@ void I2S_Handler() {
 
     // decrease decay coefficient
     if (!btn_state) {
-        if (decay_step < decay_value) {
-            decay_value -= decay_step;
+        if (release_step < release_value) {
+            release_value -= release_step;
         } else {
-            decay_value = 0;
+            release_value = 0;
         }
     }
 
@@ -207,13 +210,13 @@ void I2S_Handler() {
     mod_frequency = mul_qs15_int16(mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
-    qs15_t amplitude = getAmplitude(osc_waveform, osc_phase);
-    qs15_t decay_coeff = qu32_to_qs15(decay_value);
-    decay_coeff = mul_qs15(decay_coeff, decay_coeff); // make quadratic
+    qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
+    qs15_t release_coeff = qu32_to_qs15(release_value);
+    release_coeff = mul_qs15(release_coeff, release_coeff); // make quadratic
 
     // multiply the waveform with the decay coefficient and use that to scale the amplitude
     filter_in[0] = mul_qs15_int16(amplitude, osc_amplitude);
-    filter_in[0] = mul_qs15_int16(decay_coeff, filter_in[0]);
+    filter_in[0] = mul_qs15_int16(release_coeff, filter_in[0]);
 
     // apply biquad filter
     filter_out[0] = mul_qs12_int16(filter_b[0], filter_in[0])
@@ -221,6 +224,12 @@ void I2S_Handler() {
                     + mul_qs12_int16(filter_b[2], filter_in[2])
                     + mul_qs12_int16(filter_a[0], filter_out[1])
                     + mul_qs12_int16(filter_a[1], filter_out[2]);
+
+    // filter_out[0] = clip_uint32_uint16(mul_qs12_int32(filter_b[0], filter_in[0])
+    //                                    + mul_qs12_int32(filter_b[1], filter_in[1])
+    //                                    + mul_qs12_int32(filter_b[2], filter_in[2])
+    //                                    + mul_qs12_int32(filter_a[0], filter_out[1])
+    //                                    + mul_qs12_int32(filter_a[1], filter_out[2]));
 
     // update delay
     delay_mix = add_uint16_clip(
@@ -261,7 +270,7 @@ void loop () {
             btn_state = false;
         } else {
             btn_state = true;
-            decay_value = QU32_ONE;
+            release_value = QU32_ONE;
         }
 
         if ((input->button_state & 0x40) & (last_btn_state ^ 0x40)) {
@@ -295,18 +304,19 @@ void loop () {
         + float_to_qs15(LFO_DEPTH_MIN);
 
     // calculate decay coefficient
-    qu16_t norm_decay_reading = uint16_to_qu16(input->pot_data.decay_time) >> ADC_RES_LOG2;
-    decay_time = mul_qu8(qu16_to_qu8(norm_decay_reading), float_to_qu8(DECAY_MAX));
-    if (decay_time == 0) {
-        decay_step = QU32_ONE;
+    qu16_t norm_release_reading = uint16_to_qu16(input->pot_data.release_time) >> ADC_RES_LOG2;
+    release_time = mul_qu8(qu16_to_qu8(norm_release_reading), float_to_qu8(DECAY_MAX));
+    if (release_time == 0) {
+        release_step = QU32_ONE;
     } else {
-        decay_step = QU32_ONE / mul_qu8_uint32(decay_time, SAMPLE_RATE);
+        release_step = QU32_ONE / mul_qu8_uint32(release_time, SAMPLE_RATE);
     }
 
-    // calculate filter coefficients
-    cutoff = (uint16_t) ((((uint32_t) input->pot_data.filter_cutoff * FILTER_RANGE)
-        >> ADC_RES_LOG2) + FILTER_MIN);
-    get_lpf_coeffs(cutoff, 4, filter_a, filter_b);
+
+    cutoff = input->pot_data.filter_cutoff / 1024.0 * FILTER_RANGE + FILTER_MIN;
+    resonance = input->pot_data.filter_resonance / 1024.0 * RESONANCE_RANGE + RESONANCE_MIN;
+
+    get_lpf_coeffs_float(cutoff, resonance, filter_a, filter_b);
 
     // // update delay buffers
     // // the rest is handled in the dma ISR
@@ -334,13 +344,23 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        // input->printPots();
         Serial.println("");
-        Serial.println(input->button_state, HEX);
-        Serial.println(input->osc_waveform);
-        Serial.println(btn_state);
-        Serial.println(lfo_shape);
-        Serial.println(decay_time / 256.0);
+        Serial.println(input->pot_data.filter_cutoff);
+        Serial.println(cutoff);
+        Serial.println(resonance);
+        Serial.println(filter_a[0]);
+        Serial.println(filter_a[1]);
+        Serial.println(filter_b[0]);
+        Serial.println(filter_b[1]);
+        Serial.println(filter_b[2]);
+
+        // Serial.println("");
+        // Serial.println(input->button_state, HEX);
+        // Serial.println(input->osc_waveform);
+        // Serial.println(btn_state);
+        // Serial.println(lfo_shape);
+        // Serial.println(release_time / 256.0);
+        // Serial.println(resonance / 256.0);
 
         // Serial.println(dma_state);
         //

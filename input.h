@@ -15,7 +15,7 @@ typedef struct pot_data_s { // this must be exactly N_POTS
     uint16_t osc_frequency;
     uint16_t lfo_depth;
     uint16_t lfo_frequency;
-    uint16_t decay_time;
+    uint16_t release_time;
     uint16_t filter_cutoff;
     uint16_t filter_resonance;
     uint16_t filter_sweep;

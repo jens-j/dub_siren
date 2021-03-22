@@ -24,15 +24,15 @@
 #define GLCK_SPI        5
 
 #define CLOCK_RATE      48000000UL
-#define MAIN_LOOP_MS    500
+#define MAIN_LOOP_MS    200
 #define ADC_RES         1024
 #define ADC_RES_LOG2    10
 #define SAMPLE_RATE     48000UL
-#define POT_DEAD_ZONE   2
+#define POT_DEAD_ZONE   3
 #define BTN_TIME        20 // ms
 
-#define OSC_FREQ_MIN    20
-#define OSC_FREQ_MAX    10000
+#define OSC_FREQ_MIN    20.0
+#define OSC_FREQ_MAX    8000.0
 #define OSC_FREQ_RANGE  (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX     32767 // 16 bit signed
 #define GLIDE_RATE      (QS15_ONE >> 2) // frequency change rate in Hz/sample
@@ -44,11 +44,11 @@
 #define LFO_DEPTH_MAX   0.9
 #define LFO_DEPTH_RANGE (LFO_DEPTH_MAX - LFO_DEPTH_MIN)
 
-#define FILTER_MIN      500 // lower leads to unstable filter due to coefficient rounding
+#define FILTER_MIN      100.0 // lower leads to unstable filter due to coefficient rounding
 #define FILTER_MAX      OSC_FREQ_MAX
 #define FILTER_RANGE    (FILTER_MAX - FILTER_MIN)
-#define RESONANCE_MIN   1 // lower leads to unstable filter due to coefficient rounding
-#define RESONANCE_MAX   20
+#define RESONANCE_MIN   1.0 // lower leads to unstable filter due to coefficient rounding
+#define RESONANCE_MAX   8.0
 #define RESONANCE_RANGE (RESONANCE_MAX - RESONANCE_MIN)
 
 #define DECAY_MAX       5.0 // seconds

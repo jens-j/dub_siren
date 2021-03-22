@@ -19,6 +19,7 @@ pot_route_t POT_ROUTING[10] = {
 
 
 Input::Input () {
+    osc_waveform = SINE;
     _setupAdc();
     update();
 }
@@ -33,12 +34,13 @@ void Input::update () {
     uint16_t *pot_data_p = (uint16_t*) &pot_data;
 
     // read buttons and encoder
+    // note that the encoder gives a zero value when moving
     sreg_data = _readShiftRegister();
     button_state = sreg_data.button_data;
     if (sreg_data.encoder_data & 0x08) {osc_waveform = SQUARE;}
     else if (sreg_data.encoder_data & 0x04) {osc_waveform = SAW;}
     else if (sreg_data.encoder_data & 0x01) {osc_waveform = TRIANGLE;}
-    else {osc_waveform = SINE;}
+    else if (sreg_data.encoder_data != 0) {osc_waveform = SINE;}
 
     // read the pots
     for (i = 0; i < N_POTS; i++) {
@@ -83,7 +85,7 @@ void Input::printPots () {
     Serial.println(stringBuffer);
     sprintf(stringBuffer, "lfo_frequency = %d", pot_data.lfo_frequency);
     Serial.println(stringBuffer);
-    sprintf(stringBuffer, "decay_time    = %d", pot_data.decay_time);
+    sprintf(stringBuffer, "release_time  = %d", pot_data.release_time);
     Serial.println(stringBuffer);
     sprintf(stringBuffer, "filter_cutoff = %d", pot_data.filter_cutoff);
     Serial.println(stringBuffer);
