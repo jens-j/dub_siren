@@ -41,7 +41,7 @@
 #define LFO_FREQ_MAX    64.0
 #define LFO_FREQ_RANGE  (LFO_FREQ_MAX - LFO_FREQ_MIN)
 #define LFO_DEPTH_MIN   0.0
-#define LFO_DEPTH_MAX   0.9
+#define LFO_DEPTH_MAX   4
 #define LFO_DEPTH_RANGE (LFO_DEPTH_MAX - LFO_DEPTH_MIN)
 
 #define FILTER_MIN      100.0 // lower leads to unstable filter due to coefficient rounding

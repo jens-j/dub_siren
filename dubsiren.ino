@@ -34,7 +34,7 @@ volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1
 waveform_t lfo_shape             = SQUARE;
 qu8_t lfo_frequency              = float_to_qu8(2.0);
 qu32_t lfo_step                  = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
-qs15_t lfo_depth                 = QS15_ONE / 10;
+qs12_t lfo_depth                 = 0;
 volatile qu32_t lfo_phase        = 0;
 
 // envelope variables
@@ -259,8 +259,10 @@ void I2S_Handler() {
 
     // get lfo value
     qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
+    lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2; // normalize waveforms to [0, 1] for lfo
 
-    mod_frequency = mul_qs15_int16(mul_qs15(lfo_value, lfo_depth), qu16_to_uint16(osc_frequency));
+    mod_frequency = mul_qs15_int16(mul_qs12_qs15(lfo_depth, lfo_value),
+                                   qu16_to_uint16(osc_frequency));
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
@@ -369,8 +371,8 @@ void loop () {
 
     // calculate lfo mod depth coefficient
     qs15_t norm_depth_reading = uint16_to_qs15(input->pot_data.lfo_depth) >> ADC_RES_LOG2;
-    lfo_depth = mul_qs15_int16(norm_depth_reading, float_to_qs15(LFO_DEPTH_RANGE))
-        + float_to_qs15(LFO_DEPTH_MIN);
+    lfo_depth = mul_qs15_qs12(norm_depth_reading, float_to_qs12(LFO_DEPTH_RANGE))
+        + float_to_qs12(LFO_DEPTH_MIN);
 
     // calculate decay coefficient
     qu16_t norm_release_reading = uint16_to_qu16(input->pot_data.release_time) >> ADC_RES_LOG2;
@@ -413,9 +415,10 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        Serial.println("");
-        Serial.println(qu16_to_float(osc_setpoint));
-        Serial.println(qu16_to_float(osc_frequency));
+        // Serial.println("");
+        // Serial.println(qu16_to_float(osc_setpoint));
+        // Serial.println(qu16_to_float(osc_frequency));
+        Serial.println(qs12_to_float(lfo_depth));
         // Serial.println(input->pot_data.filter_cutoff);
         // Serial.println(cutoff);
         // Serial.println(resonance);

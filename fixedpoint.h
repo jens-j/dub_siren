@@ -19,26 +19,26 @@ typedef uint32_t qu32_t; // unsigned fixed point [0 - 1)
 
 inline qu16_t qu32_to_qu16 (qu32_t x) {return (qu16_t) (x >> 16);}
 inline qs15_t qu32_to_qs15 (qu32_t x) {return (qs15_t) (x >> 17);}
-inline float qu32_to_float (qu32_t x) {return ((float) x) / 4294967296.0;}
 
 inline qs15_t qu16_to_qs15 (qu16_t x) {return (qs15_t) (x >> 1);}
 inline qu8_t qu16_to_qu8 (qu16_t x) {return (qu8_t) (x >> 8);}
 inline uint16_t qu16_to_uint16 (qu16_t x) {return (uint16_t) (x >> 16);}
-inline float qu16_to_float (qu16_t x) {return ((float) x) / 65536.0;}
 
 inline qs12_t qs15_to_qs12 (qs15_t x) {return (qs12_t) (x >> 3);}
-inline float qs15_to_float (qs15_t x) {return ((float) x) / 32768.0;}
-
-inline float qs12_to_float (qs12_t x) {return ((float) x) / 4096.0;}
 
 inline qs12_t qu8_to_qs12 (qu8_t x) {return (qs12_t) (x << 4);}
 inline uint32_t qu8_to_uint32 (qu8_t x) {return (uint32_t) (x >> 8);}
 inline uint16_t qu8_to_uint16 (qu8_t x) {return (uint16_t) (x >> 8);}
-inline float qu8_to_float (qu8_t x) {return ((float) x) / 256.0;}
 
 inline qu16_t uint16_to_qu16 (uint16_t x) {return (qu16_t) (x << 16);}
 inline qs15_t uint16_to_qs15 (uint16_t x) {return (qs15_t) (x << 15);}
 inline qu8_t uint16_to_qu8 (uint16_t x) {return (qu8_t) (x << 8);}
+
+inline float qu8_to_float (qu8_t x) {return ((float) x) / 256.0;}
+inline float qs12_to_float (qs12_t x) {return ((float) x) / 4096.0;}
+inline float qs15_to_float (qs15_t x) {return ((float) x) / 32768.0;}
+inline float qu16_to_float (qu16_t x) {return ((float) x) / 65536.0;}
+inline float qu32_to_float (qu16_t x) {return ((float) x) / 4294967296.0;}
 
 inline qu8_t float_to_qu8 (float x) {return (qu8_t) (x * 0x100);}
 inline qs12_t float_to_qs12 (float x) {return (qs12_t) (x * 0x1000);}
@@ -72,6 +72,17 @@ inline qs15_t mul_qs15 (qs15_t x, qs15_t y) {
     return x * y >> 15;
 }
 
+inline qs15_t mul_qs12_qs15 (qs12_t x, qs15_t y) {
+
+    return x * y >> 12;
+}
+
+inline qs12_t mul_qs15_qs12 (qs15_t x, qs12_t y) {
+
+    return x * y >> 15;
+}
+
+
 // scale an int by a signed coefficient
 inline int16_t mul_qs12_int16 (qs12_t x, int16_t y) {
 
@@ -81,7 +92,7 @@ inline int16_t mul_qs12_int16 (qs12_t x, int16_t y) {
 // scale an int by a signed coefficient
 inline int32_t mul_qs12_int32 (qs12_t x, int32_t y) {
 
-    return (x * y) >> 12;
+    return x * y >> 12;
 }
 
 // scale an int by a signed coefficient
@@ -112,6 +123,15 @@ inline uint16_t mul_qu32_uint16 (qu32_t x, uint16_t y) {
 inline qs12_t div_qs12 (qs12_t x, qs12_t y) {
 
     return (x << 12) / y;
+}
+
+inline qs15_t rshift1_qs15 (qs15_t x) {
+
+    if (x & 0x8000) {
+        return 0x8000 | (x >> 1);
+    } else {
+        return x >> 1;
+    }
 }
 
 inline int16_t clip_uint32_uint16 (int32_t x) {
