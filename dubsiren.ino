@@ -125,8 +125,28 @@ void DMAC_Handler () {
 }
 
 
+qs15_t inline getSineAmplitude(qs15_t *p, qu32_t phase) {
+
+    uint16_t index = mul_qu32_uint16(phase, SINE_SAMPLES * 4) & (SINE_SAMPLES - 1);
+
+    if (phase < QU32_ONE / 4) {
+        return p[index];
+    } else if (phase < QU32_ONE / 2) {
+        return p[SINE_SAMPLES-index-1];
+    } else if (phase < QU32_ONE / 4 * 3) {
+        return qs_invert(p[index]);
+    } else {
+        return qs_invert(p[SINE_SAMPLES-index-1]);
+    }
+}
+
+
 // return the amplitude in [-1 - 1]
 qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
+
+    qs15_t local_phase;
+
+    qs15_t *sine_table_p;
 
     switch (waveform) {
         case SQUARE:
@@ -143,7 +163,7 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
            return QS15_ONE - qu32_to_qs15(phase) - qu32_to_qs15(phase);
 
         case TRIANGLE:
-            qs15_t local_phase;
+
             if (phase < QU32_ONE / 2) {
                 local_phase = qu32_to_qs15(phase);
                 return QS15_MINUS_ONE + (local_phase << 2);
@@ -153,16 +173,23 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
             }
 
         case SINE:
-            // TODO: interpolation
-            uint16_t index = mul_qu32_uint16(phase, SINE_SAMPLES * 4) & (SINE_SAMPLES - 1);
-            if (phase < QU32_ONE / 4) {
-                return SINE_TABLE[index];
-            } else if (phase < QU32_ONE / 2) {
-                return SINE_TABLE[SINE_SAMPLES - index - 1];
-            } else if (phase < QU32_ONE / 4 * 3) {
-                return qs_invert(SINE_TABLE[index]);
+            return getSineAmplitude((qs15_t*) &SINE_TABLE, phase);
+
+        case SINE2:
+            return getSineAmplitude((qs15_t*) &SINE_TABLE2, phase);
+
+        case SQUARE2:
+            if (phase >= QU32_ONE / 2) {
+                return 0;
             } else {
-                return qs_invert(SINE_TABLE[SINE_SAMPLES - index - 1]);
+                return getAmplitude(SQUARE, phase << 3);
+            }
+
+        case SAW2:
+            if (phase >= QU32_ONE / 2) {
+                return 0;
+            } else {
+                return getAmplitude(SAW, phase << 3);
             }
     }
 }
@@ -275,12 +302,25 @@ void loop () {
 
         if ((input->button_state & 0x40) & (last_btn_state ^ 0x40)) {
             lfo_shape = SQUARE;
+            lfo_phase = 0;
         } else if ((input->button_state & 0x80) & (last_btn_state ^ 0x80)) {
             lfo_shape = SAW;
+            lfo_phase = 0;
         } else if ((input->button_state & 0x01) & (last_btn_state ^ 0x01)) {
             lfo_shape = TRIANGLE;
+            lfo_phase = 0;
         } else if ((input->button_state & 0x04) & (last_btn_state ^ 0x04)) {
             lfo_shape = SINE;
+            lfo_phase = 0;
+        } else if ((input->button_state & 0x20) & (last_btn_state ^ 0x20)) {
+            lfo_shape = SQUARE2;
+            lfo_phase = 0;
+        } else if ((input->button_state & 0x10) & (last_btn_state ^ 0x10)) {
+            lfo_shape = SAW2;
+            lfo_phase = 0;
+        } else if ((input->button_state & 0x08) & (last_btn_state ^ 0x08)) {
+            lfo_shape = SINE2;
+            lfo_phase = 0;
         }
 
         last_btn_state = input->button_state;

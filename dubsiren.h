@@ -55,7 +55,7 @@
 
 #define PI              3.141593
 
-enum waveform_t {SQUARE, SAW, TRIANGLE, SINE};
+enum waveform_t {SQUARE, SAW, TRIANGLE, SINE, SQUARE2, SAW2, SINE2};
 enum dma_state_t {DMA_IDLE, DMA_WRITE_A, DMA_WRITE_B, DMA_READ_A, DMA_READ_B};
 
 
