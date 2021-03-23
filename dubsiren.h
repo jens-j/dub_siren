@@ -50,6 +50,7 @@
 #define RESONANCE_MIN   1.0 // lower leads to unstable filter due to coefficient rounding
 #define RESONANCE_MAX   8.0
 #define RESONANCE_RANGE (RESONANCE_MAX - RESONANCE_MIN)
+#define SWEEP_MAX       1.0 // RESONANCE_RANGE / s
 
 #define DECAY_MAX       5.0 // seconds
 

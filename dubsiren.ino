@@ -8,6 +8,7 @@
 #include "i2s.h"
 #include "sine.h"
 #include "biquad.h"
+#include "dsvf.h"
 
 Input *input;
 SpiDma *spiDma;
@@ -43,15 +44,18 @@ qu32_t release_step              = 0;
 volatile qu32_t release_value      = QU32_ONE;
 
 // filter variables
-uint16_t cutoff                  = FILTER_MAX;
-qu8_t resonance                  = RESONANCE_MIN;
+float cutoff                     = FILTER_MAX;
+float sweep_offset               = 0.0;
+float sweep_rate                 = 0.0;
+float resonance                  = RESONANCE_MIN;
+uint32_t sweep_t0                = 0;
 
-qs12_t filter_a[2]               = {0, 0};
-qs12_t filter_b[3]               = {0, 0, 0};
-qs12_t filter_a_f[2]             = {0, 0};
-qs12_t filter_b_f[3]             = {0, 0, 0};
-uint16_t filter_in[3]            = {0, 0, 0};        // unfiltered
-uint16_t filter_out[3]           = {0, 0, 0};        // filtered
+qs15_t dsvf_f                    = 0;
+qs15_t dsvf_q                    = 0;
+uint16_t dsvf_x                  = 0;
+uint16_t dsvf_y                  = 0;
+uint16_t dsvf_r0                 = 0;
+uint16_t dsvf_r1                 = 0;
 
 // delay variables
 qu8_t delay_time                 = float_to_qu8(0.5);
@@ -94,7 +98,6 @@ void setup () {
     spiDma = new SpiDma();
 
     setupI2S();
-    get_lpf_coeffs(cutoff, qu8_to_uint16(resonance), filter_a, filter_b);
 
     for (uint16_t i = 0; i < SPI_BLOCK_SIZE; i++) {
         spiDma->write_buffer[0].data[i] = i;
@@ -223,18 +226,11 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
 void I2S_Handler() {
     // write sample in compact stereo mode, interrupt flag is cleared automatically
-    I2S->DATA[0].reg = (uint32_t) filter_out[0] << 16 | filter_out[0];
-    // I2S->DATA[0].reg = (uint32_t) filter_in[0] << 16 | filter_in[0];
+    I2S->DATA[0].reg = (uint32_t) dsvf_y << 16 | dsvf_y;
     // I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
 
     // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
     // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
-
-    // shift sample buffers
-    filter_in[2] = filter_in[1];
-    filter_in[1] = filter_in[0];
-    filter_out[2] = filter_out[1];
-    filter_out[1] = filter_out[0];
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
@@ -270,26 +266,17 @@ void I2S_Handler() {
     release_coeff = mul_qs15(release_coeff, release_coeff); // make quadratic
 
     // multiply the waveform with the decay coefficient and use that to scale the amplitude
-    filter_in[0] = mul_qs15_int16(amplitude, osc_amplitude);
-    filter_in[0] = mul_qs15_int16(release_coeff, filter_in[0]);
+    dsvf_x = mul_qs15_int16(release_coeff, mul_qs15_int16(amplitude, osc_amplitude));
 
-    // apply biquad filter
-    filter_out[0] = mul_qs12_int16(filter_b[0], filter_in[0])
-                    + mul_qs12_int16(filter_b[1], filter_in[1])
-                    + mul_qs12_int16(filter_b[2], filter_in[2])
-                    + mul_qs12_int16(filter_a[0], filter_out[1])
-                    + mul_qs12_int16(filter_a[1], filter_out[2]);
+     // update the filter
+    dsvf_y = mul_qs15_int16(dsvf_f, dsvf_r0) + dsvf_r1;
+    dsvf_r1 = dsvf_y;
+    dsvf_r0 = mul_qs15_int16(dsvf_f, (dsvf_x - dsvf_y - mul_qs15_int16(dsvf_q, dsvf_r0))) + dsvf_r0;
 
-    // filter_out[0] = clip_uint32_uint16(mul_qs12_int32(filter_b[0], filter_in[0])
-    //                                    + mul_qs12_int32(filter_b[1], filter_in[1])
-    //                                    + mul_qs12_int32(filter_b[2], filter_in[2])
-    //                                    + mul_qs12_int32(filter_a[0], filter_out[1])
-    //                                    + mul_qs12_int32(filter_a[1], filter_out[2]));
-
-    // update delay
-    delay_mix = add_uint16_clip(
-        mul_qu16_uint16(delay_mix_original, filter_out[0]),
-        mul_qu16_uint16(delay_mix_feedback, spiDma->read_buffer[active_buffer].data[buffer_index]));
+    // // update delay
+    // delay_mix = add_uint16_clip(
+    //     mul_qu16_uint16(delay_mix_original, filter_out[0]),
+    //     mul_qu16_uint16(delay_mix_feedback, spiDma->read_buffer[active_buffer].data[buffer_index]));
 
     // spiDma->write_buffer[active_buffer].data[buffer_index] = delay_mix;
     // spiDma->write_buffer[active_buffer].data[buffer_index] = filter_out[0];
@@ -303,6 +290,14 @@ void I2S_Handler() {
     //         dma_state = DMA_WRITE_A;
     //     }
     // }
+}
+
+
+void startLfo (waveform_t waveform) {
+    lfo_shape = waveform;
+    lfo_phase = 0;
+    sweep_offset = 0.0;
+    sweep_t0 = micros();
 }
 
 
@@ -329,29 +324,21 @@ void loop () {
         }
 
         if ((input->button_state & 0x40) & (last_btn_state ^ 0x40)) {
-            lfo_shape = SINE;
-            lfo_phase = 0;
+            startLfo(SINE);
         } else if ((input->button_state & 0x80) & (last_btn_state ^ 0x80)) {
-            lfo_shape = SQUARE;
-            lfo_phase = 0;
+            startLfo(SQUARE);
         } else if ((input->button_state & 0x01) & (last_btn_state ^ 0x01)) {
-            lfo_shape = SAW_DOWN;
-            lfo_phase = 0;
+            startLfo(SAW_DOWN);
         } else if ((input->button_state & 0x04) & (last_btn_state ^ 0x04)) {
-            lfo_shape = SAW_UP;
-            lfo_phase = 0;
+            startLfo(SAW_UP);
         } else if ((input->button_state & 0x20) & (last_btn_state ^ 0x20)) {
-            lfo_shape = SINE_H3;
-            lfo_phase = 0;
+            startLfo(SINE_H3);
         } else if ((input->button_state & 0x10) & (last_btn_state ^ 0x10)) {
-            lfo_shape = SQUARE_ALT;
-            lfo_phase = 0;
+            startLfo(SQUARE_ALT);
         } else if ((input->button_state & 0x08) & (last_btn_state ^ 0x08)) {
-            lfo_shape = SAW_ALT;
-            lfo_phase = 0;
+            startLfo(SAW_ALT);
         } else if ((input->button_state & 0x02) & (last_btn_state ^ 0x02)) {
-            lfo_shape = SAW_WOOP;
-            lfo_phase = 0;
+            startLfo(SAW_WOOP);
         }
 
         last_btn_state = input->button_state;
@@ -387,7 +374,19 @@ void loop () {
     cutoff = input->pot_data.filter_cutoff / 1024.0 * FILTER_RANGE + FILTER_MIN;
     resonance = input->pot_data.filter_resonance / 1024.0 * RESONANCE_RANGE + RESONANCE_MIN;
 
-    get_lpf_coeffs_float(cutoff, resonance, filter_a, filter_b);
+    // sweep rate [-SWEEP_MAX, SWEEP_MAX]
+    sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * SWEEP_MAX * FILTER_RANGE;
+
+    // update sweep offset
+    if (!btn_state) {
+        uint32_t sweep_t1 = micros();
+        float dt = (sweep_t1 - sweep_t0) * 1E-6;
+        sweep_offset += dt * sweep_rate;
+        sweep_t0 = sweep_t1;
+    }
+
+    float sweep_cutoff = constrain(cutoff + sweep_offset, FILTER_MIN, FILTER_MAX);
+    get_dsvf_coeffs(sweep_cutoff,resonance , &dsvf_f, &dsvf_q);
 
     // // update delay buffers
     // // the rest is handled in the dma ISR
@@ -415,61 +414,16 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        // Serial.println("");
-        // Serial.println(qu16_to_float(osc_setpoint));
-        // Serial.println(qu16_to_float(osc_frequency));
-        Serial.println(qs12_to_float(lfo_depth));
-        // Serial.println(input->pot_data.filter_cutoff);
-        // Serial.println(cutoff);
-        // Serial.println(resonance);
-        // Serial.println(filter_a[0]);
-        // Serial.println(filter_a[1]);
-        // Serial.println(filter_b[0]);
-        // Serial.println(filter_b[1]);
-        // Serial.println(filter_b[2]);
-
-        // Serial.println("");
-        // Serial.println(input->button_state, HEX);
-        // Serial.println(input->osc_waveform);
-        // Serial.println(btn_state);
-        // Serial.println(lfo_shape);
-        // Serial.println(release_time / 256.0);
-        // Serial.println(resonance / 256.0);
-
-        // Serial.println(dma_state);
-        //
-        // DMAC->CHID.reg = DMA_CH_READ;
-        // sprintf(stringBuffer, "%04X %04X", SERCOM1->SPI.STATUS.reg, SERCOM1->SPI.INTFLAG.reg);
-        // Serial.println(stringBuffer);
-        //
-        // spiDma->printDmaDescriptor(1, true);
-        // spiDma->printWriteBuffer(0);
-        // spiDma->printReadBuffer(0);
-        // Serial.println("");
-
-        // spiDma->printBtCount(0);
-
-        // Serial.print("write ");
-        // for (i = 0; i < 16; i++) {
-        //     sprintf(stringBuffer, "%04X ", spiDma->write_buffer[0].data[i]);
-        //     Serial.print(stringBuffer);
-        // }
-        // Serial.print(" ... ");
-        // for (i = 1008; i < 1024; i++) {
-        //     sprintf(stringBuffer, "%04X ", spiDma->write_buffer[0].data[i]);
-        //     Serial.print(stringBuffer);
-        // }
-        // Serial.println("");
-        // Serial.print("read  ");
-        // for (i = 0; i < 16; i++) {
-        //     sprintf(stringBuffer, "%04X ", spiDma->read_buffer[0].data[i]);
-        //     Serial.print(stringBuffer);
-        // }
-        // Serial.print(" ... ");
-        // for (i = 1008; i < 1024; i++) {
-        //     sprintf(stringBuffer, "%04X ", spiDma->read_buffer[0].data[i]);
-        //     Serial.print(stringBuffer);
-        // }
-        // Serial.println("\n");
+        Serial.println("");
+        sprintf(stringBuffer, "x  = %x", dsvf_x);
+        Serial.println(stringBuffer);
+        sprintf(stringBuffer, "y  = %x", dsvf_y);
+        Serial.println(stringBuffer);
+        sprintf(stringBuffer, "r0 = %x", dsvf_r0);
+        Serial.println(stringBuffer);
+        sprintf(stringBuffer, "r1 = %x", dsvf_r1);
+        Serial.println(stringBuffer);
+        Serial.println(qs15_to_float(dsvf_f));
+        Serial.println(qs15_to_float(dsvf_q));
     }
 }
