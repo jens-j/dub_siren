@@ -71,7 +71,7 @@ void SpiDma::write (int index, uint32_t address) {
 
 void SpiDma::erase () {
 
-    int i;
+    uint32_t i;
 
     while (transfer_active);
     transfer_active = true;
@@ -84,7 +84,7 @@ void SpiDma::erase () {
     SERCOM1->SPI.DATA.reg = SPI_CMD_WRITE;
 
     // write zero address and 2**27 zeros
-    for (i = 0; i < 1; i++) {
+    for (i = 0; i < 4 + 131072; i++) {
         while (!SERCOM1->SPI.INTFLAG.bit.DRE);
         SERCOM1->SPI.DATA.reg = 0;
     }
@@ -109,7 +109,8 @@ void SpiDma::printWriteBuffer (int index) {
     int i;
     char line_buffer[40];
 
-    Serial.println("Write Buffer:");
+    sprintf(line_buffer, "Write Buffer %d:", index);
+    Serial.println(line_buffer);
     sprintf(line_buffer, "opcode  = 0x%02X", write_buffer[index].opcode);
     Serial.println(line_buffer);
     sprintf(line_buffer, "address = 0x%08X", write_buffer[index].address);
@@ -132,7 +133,8 @@ void SpiDma::printReadBuffer (int index) {
     int i;
     char line_buffer[40];
 
-    Serial.println("Read Buffer:");
+    sprintf(line_buffer, "Read Buffer %d:", index);
+    Serial.println(line_buffer);
     for (i = 0; i < 8; i++) {
         sprintf(line_buffer, "%04X ", read_buffer[index].data[i]);
         Serial.print(line_buffer);

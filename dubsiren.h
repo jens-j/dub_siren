@@ -3,6 +3,8 @@
 
 #define PIN_BOARD_LED   32
 #define PIN_LFO_LED     6
+#define PIN_SWITCH      0
+#define PIN_TRIGGER     12
 #define PIN_ADC_CH0     A5
 #define PIN_ADC_CH1     A4
 #define PIN_I2S_BCLK    2
@@ -41,11 +43,11 @@
 #define LFO_FREQ_MAX    64.0
 #define LFO_FREQ_RANGE  (LFO_FREQ_MAX - LFO_FREQ_MIN)
 #define LFO_DEPTH_MIN   0.0
-#define LFO_DEPTH_MAX   4
+#define LFO_DEPTH_MAX   4.0
 #define LFO_DEPTH_RANGE (LFO_DEPTH_MAX - LFO_DEPTH_MIN)
 
 #define FILTER_MIN      100.0 // lower leads to unstable filter due to coefficient rounding
-#define FILTER_MAX      OSC_FREQ_MAX
+#define FILTER_MAX      8000.0
 #define FILTER_RANGE    (FILTER_MAX - FILTER_MIN)
 #define RESONANCE_MIN   1.0 // lower leads to unstable filter due to coefficient rounding
 #define RESONANCE_MAX   8.0
@@ -57,12 +59,6 @@
 #define PI              3.141593
 
 enum waveform_t {SQUARE, SAW_DOWN, SAW_UP, TRIANGLE, SINE, SQUARE_ALT, SAW_ALT, SINE_H3, SAW_WOOP};
-enum dma_state_t {DMA_IDLE, DMA_WRITE_A, DMA_WRITE_B, DMA_READ_A, DMA_READ_B};
-
-
-
-
-
 
 
 #endif

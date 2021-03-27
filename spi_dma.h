@@ -9,7 +9,7 @@
 #define RAM_SAMPLES         (RAM_BYTES >> 1)
 #define RAM_BLOCKS          (RAM_BYTES / SPI_BLOCK_SIZE)
 
-#define SPI_BLOCK_SIZE      64
+#define SPI_BLOCK_SIZE      1024
 #define SPI_BLOCK_BYTES     (SPI_BLOCK_SIZE << 1)
 #define SPI_BUFFER_BYTES    (SPI_BLOCK_BYTES + 5)
 
@@ -18,6 +18,8 @@
 
 #define SPI_CMD_READ        3
 #define SPI_CMD_WRITE       2
+
+enum dma_state_t {DMA_IDLE, DMA_READ, DMA_WRITE, DMA_WRITE_A, DMA_WRITE_B, DMA_READ_A, DMA_READ_B};
 
 
 typedef struct __attribute__((packed)) spi_buffer_s {
@@ -34,8 +36,8 @@ private:
     void _setupSpi ();
     void _setupDma ();
 public:
-    spi_buffer_t read_buffer[2]; // the opcode and address are not used but the dma will return bytes when they are written
-    spi_buffer_t write_buffer[2]; // also, the compiler does not allow making these volatile
+    volatile spi_buffer_t read_buffer[2]; // the opcode and address are not used but the dma will return bytes when they are written
+    volatile spi_buffer_t write_buffer[2]; // also, the compiler does not allow making these volatile
     volatile bool transfer_active;
 
     SpiDma ();
