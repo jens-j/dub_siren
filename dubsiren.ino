@@ -62,8 +62,8 @@ uint16_t dsvf_r1                 = 0;
 qu8_t delay_time                 = float_to_qu8(0.5);
 uint32_t delay_blocks            =
     qu8_to_uint32(mul_qu8(delay_time, float_to_qu8((float) SAMPLE_RATE / SPI_BLOCK_SIZE)));
-qu16_t delay_mix_feedback        = float_to_qu16(0.2);
-qu16_t delay_mix_original        = float_to_qu16(0.6);
+qu16_t delay_mix_feedback        = float_to_qu16(0.1);
+qu16_t delay_mix_original        = float_to_qu16(0.2);
 uint16_t delay_mix               = 0;               // mixed orginal and delayed sample
 uint32_t buffer_index            = 0;               // current index in the send and resv buffers
 volatile uint32_t read_address   = 0;               // RAM read address
@@ -103,8 +103,8 @@ void setup () {
     setupI2S();
 
     for (uint16_t i = 0; i < SPI_BLOCK_SIZE; i++) {
-        spiDma->write_buffer[0].data[i] = i;
-        spiDma->write_buffer[1].data[i] = i;
+        spiDma->write_buffer[0].data[i] = i + 0x100;
+        spiDma->write_buffer[1].data[i] = i + 0x100;
         spiDma->read_buffer[0].data[i] = 0;
         spiDma->read_buffer[1].data[i] = 0;
     }
@@ -230,7 +230,7 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 void I2S_Handler() {
     // write sample in compact stereo mode, interrupt flag is cleared automatically
     // ->DATA[0].reg = (uint32_t) dsvf_y << 16 | dsvf_y;
-    I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
+    // I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
 
     // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
     // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
@@ -269,19 +269,23 @@ void I2S_Handler() {
     release_coeff = mul_qs15(release_coeff, release_coeff); // make quadratic
 
     // multiply the waveform with the decay coefficient and use that to scale the amplitude
-    dsvf_x = mul_qs15_int16(release_coeff, mul_qs15_int16(amplitude, osc_amplitude));
+    dsvf_x = mul_qs15_int16(amplitude, osc_amplitude);
 
-     // update the filter
+    // update the filter
     dsvf_y = mul_qs15_int16(dsvf_f, dsvf_r0) + dsvf_r1;
+    dsvf_y = mul_qs15_int16(release_coeff, dsvf_y);
+
     dsvf_r1 = dsvf_y;
     dsvf_r0 = mul_qs15_int16(dsvf_f, (dsvf_x - dsvf_y - mul_qs15_int16(dsvf_q, dsvf_r0))) + dsvf_r0;
-
-    trigger_flag = trigger_flag || digitalRead(PIN_TRIGGER) == 0;
 
     // update delay
     delay_mix = add_uint16_clip(
         mul_qu16_uint16(delay_mix_original, dsvf_y),
         mul_qu16_uint16(delay_mix_feedback, spiDma->read_buffer[active_buffer].data[buffer_index]));
+
+    // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
+    // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
+    I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
 
     spiDma->write_buffer[active_buffer].data[buffer_index] = delay_mix;
 
@@ -294,6 +298,8 @@ void I2S_Handler() {
             dma_state = DMA_WRITE_A;
         }
     }
+
+    trigger_flag = trigger_flag || digitalRead(PIN_TRIGGER) == 0;
 }
 
 

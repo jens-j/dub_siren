@@ -21,10 +21,15 @@
 
 enum dma_state_t {DMA_IDLE, DMA_READ, DMA_WRITE, DMA_WRITE_A, DMA_WRITE_B, DMA_READ_A, DMA_READ_B};
 
+typedef struct __attribute__((packed)) spi_address_s {
+    uint8_t byte2;
+    uint8_t byte1;
+    uint8_t byte0;
+} spi_address_t;
 
 typedef struct __attribute__((packed)) spi_buffer_s {
     uint8_t opcode;
-    uint32_t address;
+    spi_address_t address;
     uint16_t data[SPI_BLOCK_SIZE];
 } spi_buffer_t;
 

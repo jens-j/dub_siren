@@ -27,12 +27,9 @@ void SpiDma::read (int index, uint32_t address) {
     transfer_active = true;
 
     write_buffer[index].opcode = SPI_CMD_READ; // set packet opcode
-    *((uint32_t*) &write_buffer[index].address) = address; // set packet address
-
-    // _descriptor_section[DMA_CH_WRITE].SRCADDR.reg = // set dma write descriptor source address
-    //     (uint32_t) &write_buffer[index] + SPI_BUFFER_BYTES;
-    // _descriptor_section[DMA_CH_READ].DSTADDR.reg = // set dma read descriptor destination address
-    //     (uint32_t) &read_buffer[index] + SPI_BUFFER_BYTES;
+    *((uint8_t*) &write_buffer[index].address.byte0) = address & 0xff; // set packet address
+    *((uint8_t*) &write_buffer[index].address.byte1) = (address >> 8) & 0xff;
+    *((uint8_t*) &write_buffer[index].address.byte2) = (address >> 16) & 0xff;
 
     dma_write_descriptor.SRCADDR.reg = (uint32_t) &write_buffer[index] + SPI_BUFFER_BYTES;
     dma_read_descriptor.DSTADDR.reg = (uint32_t) &read_buffer[index] + SPI_BUFFER_BYTES;
@@ -56,7 +53,9 @@ void SpiDma::write (int index, uint32_t address) {
     transfer_active = true;
 
     write_buffer[index].opcode = SPI_CMD_WRITE; // set packet opcode
-    *((uint32_t*) &write_buffer[index].address) = address; // set packet address
+    *((uint8_t*) &write_buffer[index].address.byte0) = address & 0xff; // set packet address
+    *((uint8_t*) &write_buffer[index].address.byte1) = (address >> 8) & 0xff;
+    *((uint8_t*) &write_buffer[index].address.byte2) = (address >> 16) & 0xff;
 
     _descriptor_section[DMA_CH_WRITE].SRCADDR.reg = // set dma descriptor source address
         (uint32_t) &write_buffer[index] + SPI_BUFFER_BYTES;
@@ -113,7 +112,8 @@ void SpiDma::printWriteBuffer (int index) {
     Serial.println(line_buffer);
     sprintf(line_buffer, "opcode  = 0x%02X", write_buffer[index].opcode);
     Serial.println(line_buffer);
-    sprintf(line_buffer, "address = 0x%08X", write_buffer[index].address);
+    sprintf(line_buffer, "address = 0x%02X%02X%02X", write_buffer[index].address.byte2,
+        write_buffer[index].address.byte1, write_buffer[index].address.byte0);
     Serial.println(line_buffer);
     for (i = 0; i < 8; i++) {
         sprintf(line_buffer, "%04X ", write_buffer[index].data[i]);
