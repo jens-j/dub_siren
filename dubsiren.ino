@@ -27,7 +27,7 @@ volatile bool trigger_flag       = false;
 // oscillator variables
 qu16_t osc_setpoint              = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
-volatile uint16_t osc_amplitude  = 2000;
+volatile uint16_t osc_amplitude  = 10000;
 volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
@@ -43,6 +43,7 @@ volatile qu32_t lfo_phase        = 0;
 qu8_t release_time               = 0;
 qu32_t release_step              = 0;
 volatile qu32_t release_value    = QU32_ONE;
+uint16_t release_sample          = 0;
 
 // filter variables
 float cutoff                     = FILTER_MAX;
@@ -59,15 +60,14 @@ uint16_t dsvf_r0                 = 0;
 uint16_t dsvf_r1                 = 0;
 
 // delay variables
-qu8_t delay_time                 = float_to_qu8(0.5);
-uint32_t delay_blocks            =
-    qu8_to_uint32(mul_qu8(delay_time, float_to_qu8((float) SAMPLE_RATE / SPI_BLOCK_SIZE)));
-qu16_t delay_mix_feedback        = float_to_qu16(0.1);
-qu16_t delay_mix_original        = float_to_qu16(0.2);
+qs15_t delay_feedback            = float_to_qs15(0.75);
+qs15_t delay_wet                 = float_to_qs15(0.3);
+qs15_t delay_dry                 = float_to_qs15(0.7);
+uint16_t delay_time              = 0;
 uint16_t delay_mix               = 0;               // mixed orginal and delayed sample
 uint32_t buffer_index            = 0;               // current index in the send and resv buffers
 volatile uint32_t read_address   = 0;               // RAM read address
-volatile int32_t write_address   = 0xC000;          // RAM write address ~1s
+volatile uint32_t write_address  = 0xC000;          // RAM write address ~1s
 volatile int active_buffer       = 0;               // indexes which of the two sets of buffers the ISR should use
 volatile dma_state_t dma_state   = DMA_IDLE;        // flag for the ISR to signal the main loop to update the buffers
 
@@ -124,8 +124,9 @@ void DMAC_Handler () {
         dma_state = DMA_READ_A;
     } else if (dma_state == DMA_READ_B) {
         // Serial.println('D');
-        read_address = (read_address + SPI_BLOCK_BYTES) & (RAM_BYTES - 1);
         write_address = (write_address + SPI_BLOCK_BYTES) & (RAM_BYTES - 1);
+        read_address = (write_address + (RAM_BYTES - delay_time * SPI_BLOCK_BYTES)) & (RAM_BYTES - 1);
+        // read_address = (read_address + SPI_BLOCK_BYTES) & (RAM_BYTES - 1);
         dma_state = DMA_IDLE;
     }
 }
@@ -172,22 +173,6 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
            return QS15_MINUS_ONE + qu32_to_qs15(phase) + qu32_to_qs15(phase);
 
         case SAW_WOOP:
-            // if (phase < QU32_ONE / 2) {
-            //     local_phase = qu32_to_qs15(phase);
-            //     return QS15_MINUS_ONE + local_phase + local_phase + local_phase;
-            // } else { // amp = 1.375 * phase - 0.375 (with phase normalized to 0.5..1)
-            //     local_phase = qu32_to_qs15(phase) - QS15_ONE / 2;
-            //     return QS15_MINUS_HALF + local_phase + local_phase + local_phase;
-            // }
-
-            // if (phase < QU32_ONE / 4) {
-            //     local_phase = qu32_to_qs15(phase);
-            //     return QS15_MINUS_ONE + local_phase + local_phase;
-            // } else {
-            //     local_phase = qu32_to_qs15(phase) - QS15_ONE / 4;
-            //     return QS15_MINUS_HALF + QS15_MINUS_QUARTER + local_phase + local_phase;
-            // }
-
             if (phase < QU32_ONE / 3) {
                 local_phase = qu32_to_qs15(phase);
             } else { // amp = 1.375 * phase - 0.375 (with phase normalized to 0.5..1)
@@ -228,12 +213,6 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
 
 void I2S_Handler() {
-    // write sample in compact stereo mode, interrupt flag is cleared automatically
-    // ->DATA[0].reg = (uint32_t) dsvf_y << 16 | dsvf_y;
-    // I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
-
-    // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
-    // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
@@ -260,34 +239,38 @@ void I2S_Handler() {
     qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
     lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2; // normalize waveforms to [0, 1] for lfo
 
+    // calculate oscillator velocity
     mod_frequency = mul_qs15_int16(mul_qs12_qs15(lfo_depth, lfo_value),
                                    qu16_to_uint16(osc_frequency));
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
+    // calculate oscillator value
     qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
-    qs15_t release_coeff = qu32_to_qs15(release_value);
-    release_coeff = mul_qs15(release_coeff, release_coeff); // make quadratic
-
-    // multiply the waveform with the decay coefficient and use that to scale the amplitude
     dsvf_x = mul_qs15_int16(amplitude, osc_amplitude);
 
     // update the filter
     dsvf_y = mul_qs15_int16(dsvf_f, dsvf_r0) + dsvf_r1;
-    dsvf_y = mul_qs15_int16(release_coeff, dsvf_y);
-
     dsvf_r1 = dsvf_y;
     dsvf_r0 = mul_qs15_int16(dsvf_f, (dsvf_x - dsvf_y - mul_qs15_int16(dsvf_q, dsvf_r0))) + dsvf_r0;
 
-    // update delay
-    delay_mix = add_uint16_clip(
-        mul_qu16_uint16(delay_mix_original, dsvf_y),
-        mul_qu16_uint16(delay_mix_feedback, spiDma->read_buffer[active_buffer].data[buffer_index]));
+    // multiply with envelope
+    qs15_t release_coeff = qu32_to_qs15(release_value);
+    release_coeff = mul_qs15(release_coeff, release_coeff); // make quadratic
+    release_sample = mul_qs15_int16(release_coeff, dsvf_y);
 
+    // update delay
+    uint16_t feedback_sample = spiDma->read_buffer[active_buffer].data[buffer_index];
+    feedback_sample = mul_qs15_int16(delay_feedback, feedback_sample);
+    spiDma->write_buffer[active_buffer].data[buffer_index] =
+        add_uint16_clip(release_sample, feedback_sample);
+
+    delay_mix = add_uint16_clip(
+        mul_qs15_int16(delay_dry, release_sample), mul_qs15_int16(delay_wet, feedback_sample));
+
+    // write sample in compact stereo mode, interrupt flag is cleared automatically
     // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
     // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
     I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
-
-    spiDma->write_buffer[active_buffer].data[buffer_index] = delay_mix;
 
     if (++buffer_index == SPI_BLOCK_SIZE) {
         buffer_index = 0;
@@ -383,7 +366,15 @@ void loop () {
         release_step = QU32_ONE / mul_qu8_uint32(release_time, SAMPLE_RATE);
     }
 
+    // calculate delay coefficients
+    uint16_t norm_delay_wet_reading = uint16_to_qu16(input->pot_data.delay_wet) >> ADC_RES_LOG2;
+    delay_wet = mul_qu16(norm_delay_wet_reading, float_to_qu16(DELAY_WET_MAX));
+    delay_dry = QU16_ONE - delay_wet;
+    uint16_t norm_delay_feedback_reading = uint16_to_qu16(input->pot_data.delay_feedback) >> ADC_RES_LOG2;
+    delay_feedback = mul_qu16(norm_delay_feedback_reading, float_to_qu16(DELAY_FEEDBACK_MAX));
+    delay_time = ((input->pot_data.delay_time * DELAY_TIME_RANGE) >> 10) + DELAY_TIME_MIN; // updated in the dma isr
 
+    // calculate filter coefficients
     cutoff = input->pot_data.filter_cutoff / 1024.0 * FILTER_RANGE + FILTER_MIN;
     resonance = input->pot_data.filter_resonance / 1024.0 * RESONANCE_RANGE + RESONANCE_MIN;
 
@@ -425,19 +416,19 @@ void loop () {
         led_state = !led_state;
         led_t0 += MAIN_LOOP_MS;
 
-        Serial.print("write: ");
-        Serial.println(write_address, HEX);
-        spiDma->printWriteBuffer(0);
-        Serial.print("read:  ");
-        Serial.println(read_address, HEX);
-        spiDma->printReadBuffer(0);
+        // Serial.print("write: ");
+        // Serial.println(write_address, HEX);
+        // spiDma->printWriteBuffer(0);
+        // Serial.print("read:  ");
+        // Serial.println(read_address, HEX);
+        // spiDma->printReadBuffer(0);
 
-        // Serial.println("");
-        // Serial.println(loop_t1);
-        // Serial.println(sweep_cutoff);
-        // sprintf(stringBuffer, "x  = %x", dsvf_x);
-        // Serial.println(stringBuffer);
-        // sprintf(stringBuffer, "y  = %x", dsvf_y);
-        // Serial.println(stringBuffer);
+        Serial.println("");
+        Serial.println(input->pot_data.delay_wet);
+        Serial.println(input->pot_data.delay_feedback);
+        Serial.println(delay_wet, HEX);
+        Serial.println(delay_dry, HEX);
+        Serial.println(delay_feedback, HEX);
+        Serial.println(delay_time);
     }
 }

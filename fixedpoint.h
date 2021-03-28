@@ -50,8 +50,16 @@ inline qs15_t qs_invert (qs15_t x) {return (~x) + 1;}
 
 
 inline uint16_t add_uint16_clip(uint16_t x, uint16_t y) {
-    uint32_t z = (uint32_t) x + y;
-    return z & 0x10000 ? 0xFFFF : (uint16_t) z;
+
+    uint16_t z = x + y;
+
+    if (x & y & ~z & 0x8000) {
+        return 0x8000;
+    } else if (~x & ~y & z & 0x8000) {
+        return 0x7FFF;
+    } else {
+        return z;
+    }
 }
 
 // multiply two qu16_t values

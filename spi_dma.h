@@ -5,14 +5,6 @@
 #define __SPI_DMA_H
 
 
-#define RAM_BYTES           (1 << 17)
-#define RAM_SAMPLES         (RAM_BYTES >> 1)
-#define RAM_BLOCKS          (RAM_BYTES / SPI_BLOCK_SIZE)
-
-#define SPI_BLOCK_SIZE      1024
-#define SPI_BLOCK_BYTES     (SPI_BLOCK_SIZE << 1)
-#define SPI_BUFFER_BYTES    (SPI_BLOCK_BYTES + 5)
-
 #define DMA_CH_WRITE        0
 #define DMA_CH_READ         1
 
