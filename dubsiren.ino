@@ -6,7 +6,7 @@
 #include "fixedpoint.h"
 #include "spi_dma.h"
 #include "i2s.h"
-#include "sine.h"
+#include "waveforms.h"
 #include "biquad.h"
 #include "dsvf.h"
 
@@ -16,6 +16,8 @@ uint32_t led_t0                  = 0;
 bool led_state                   = true;
 volatile uint32_t loop_t0        = 0;
 volatile uint32_t loop_t1        = 0;
+volatile uint32_t isr_t0         = 0;
+volatile uint32_t isr_dt         = 0;
 
 // button variables
 uint8_t last_btn_state           = 0;
@@ -27,7 +29,8 @@ volatile bool trigger_flag       = false;
 // oscillator variables
 qu16_t osc_setpoint              = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
-volatile uint16_t osc_amplitude  = 10000;
+volatile qu32_t osc_third_phase  = 0;
+volatile qu32_t osc_fifth_phase  = 0;
 volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
@@ -66,6 +69,7 @@ qs15_t delay_dry                 = float_to_qs15(0.7);
 uint16_t delay_time              = 0;
 uint16_t delay_mix               = 0;               // mixed orginal and delayed sample
 uint32_t buffer_index            = 0;               // current index in the send and resv buffers
+volatile qs15_t output_sample    = 0;
 volatile uint32_t read_address   = 0;               // RAM read address
 volatile uint32_t write_address  = 0xC000;          // RAM write address ~1s
 volatile int active_buffer       = 0;               // indexes which of the two sets of buffers the ISR should use
@@ -132,37 +136,36 @@ void DMAC_Handler () {
 }
 
 
-qs15_t inline getSineAmplitude(qs15_t *p, qu32_t phase) {
+qs15_t inline getSineAmplitude(qu32_t phase) {
 
     uint16_t index = mul_qu32_uint16(phase, SINE_SAMPLES * 4) & (SINE_SAMPLES - 1);
 
     if (phase < QU32_ONE / 4) {
-        return p[index];
+        return SINE_TABLE[index];
     } else if (phase < QU32_ONE / 2) {
-        return p[SINE_SAMPLES-index-1];
+        return SINE_TABLE[SINE_SAMPLES-index-1];
     } else if (phase < QU32_ONE / 4 * 3) {
-        return qs_invert(p[index]);
+        return qs_invert(SINE_TABLE[index]);
     } else {
-        return qs_invert(p[SINE_SAMPLES-index-1]);
+        return qs_invert(SINE_TABLE[SINE_SAMPLES-index-1]);
     }
 }
 
 
 // return the amplitude in [-1 - 1]
-qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
+qs15_t inline getMonoAmplitude(waveform_t waveform, qu32_t phase) {
 
+    uint16_t index;
     qs15_t local_phase;
-
-    qs15_t *sine_table_p;
+    qu32_t third;
+    qu32_t fifth;
 
     switch (waveform) {
         case SQUARE:
-            //return (phase < QU16_ONE / 4) ? QS15_ONE : QS15_MINUS_ONE;
-            if (phase < QU32_ONE / 2) {
-                return QS15_ONE;
-            } else {
-                return QS15_MINUS_ONE;
-            }
+            return (phase < QU32_ONE / 2) ? QS15_ONE : QS15_MINUS_ONE;
+
+        case PULSE:
+            return (phase < QU32_ONE / 5) ? QS15_ONE : QS15_MINUS_ONE;
 
         // the phase to amplitude ratio has a gain of two. Because of the fixed point limits of
         // [-1, 1) a multiplication could overflow. Therefore the phase is just subtracted twice.
@@ -180,42 +183,62 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
             }
             return QS15_MINUS_ONE + local_phase + local_phase + local_phase;
 
-        case TRIANGLE:
+        case CAPACITOR:
+            index = mul_qu32_uint16(phase, CAPACITOR_SAMPLES * 2) & (CAPACITOR_SAMPLES - 1);
+
             if (phase < QU32_ONE / 2) {
-                local_phase = qu32_to_qs15(phase);
-                return QS15_MINUS_ONE + (local_phase << 2);
+                return CAPACITOR_TABLE[index];
             } else {
-                local_phase = (qu32_to_qs15(phase) - (QS15_ONE / 3)); // [0.5 - 1] -> [0 - 1]
-                return QS15_ONE - (local_phase << 2);
+                return qs_invert(CAPACITOR_TABLE[index]);
             }
 
         case SINE:
-            return getSineAmplitude((qs15_t*) &SINE_TABLE, phase);
+            return getSineAmplitude(phase);
 
         case SINE_H3:
-            return getSineAmplitude((qs15_t*) &SINE_TABLE2, phase);
+            // sine + 3rd overtone
+            return rshift1_qs15(getSineAmplitude(phase))
+                   + rshift1_qs15(getSineAmplitude(phase + phase + phase));
 
-        case SQUARE_ALT:
+        case LASER_SQUARE:
             if (phase >= QU32_ONE / 2) {
                 return QS15_MINUS_ONE;
             } else {
-                return getAmplitude(SQUARE, phase << 3);
+                return getMonoAmplitude(SQUARE, phase << 3);
             }
 
-        case SAW_ALT:
+        case LASER_SAW:
             if (phase >= QU32_ONE / 2) {
                 return QS15_MINUS_ONE;
             } else {
-                return getAmplitude(SAW_DOWN, phase << 3);
+                return getMonoAmplitude(SAW_DOWN, phase << 3);
             }
+    }
+}
+
+
+qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase, qu32_t phase_third, qu32_t phase_fifth) {
+
+    if (waveform == CHORD) {
+        return rshift1_qs15(getSineAmplitude(phase))
+               + rshift1_qs15(getSineAmplitude(phase_third))
+               + rshift1_qs15(getSineAmplitude(phase_fifth));
+    } else {
+        return getMonoAmplitude(waveform, phase);
     }
 }
 
 
 void I2S_Handler() {
 
+    // isr_t0 = micros();
+
+    I2S->DATA[0].reg = output_sample;
+
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
+    osc_third_phase += osc_step + (osc_step >> 2);
+    osc_fifth_phase += osc_step + (osc_step >> 1);
     lfo_phase += lfo_step;
 
     // decrease decay coefficient
@@ -236,7 +259,7 @@ void I2S_Handler() {
     }
 
     // get lfo value
-    qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
+    qs15_t lfo_value = getMonoAmplitude(lfo_shape, lfo_phase);
     lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2; // normalize waveforms to [0, 1] for lfo
 
     // calculate oscillator velocity
@@ -245,8 +268,9 @@ void I2S_Handler() {
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // calculate oscillator value
-    qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
-    dsvf_x = mul_qs15_int16(amplitude, osc_amplitude);
+    qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase, osc_third_phase, osc_fifth_phase);
+    //qs15_t amplitude = getMonoAmplitude(input->osc_waveform, osc_phase);
+    dsvf_x = mul_qs15_int16(amplitude, OSC_AMP);
 
     // update the filter
     dsvf_y = mul_qs15_int16(dsvf_f, dsvf_r0) + dsvf_r1;
@@ -270,7 +294,7 @@ void I2S_Handler() {
     // write sample in compact stereo mode, interrupt flag is cleared automatically
     // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
     // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
-    I2S->DATA[0].reg = (uint32_t) delay_mix << 16 | delay_mix;
+    output_sample = (uint32_t) delay_mix << 16 | delay_mix;
 
     if (++buffer_index == SPI_BLOCK_SIZE) {
         buffer_index = 0;
@@ -283,6 +307,8 @@ void I2S_Handler() {
     }
 
     trigger_flag = trigger_flag || digitalRead(PIN_TRIGGER) == 0;
+
+    // isr_dt = micros() - isr_t0;
 }
 
 
@@ -327,9 +353,9 @@ void loop () {
         } else if ((input->button_state & 0x20) & (last_btn_state ^ 0x20)) {
             startLfo(SINE_H3);
         } else if ((input->button_state & 0x10) & (last_btn_state ^ 0x10)) {
-            startLfo(SQUARE_ALT);
+            startLfo(LASER_SQUARE);
         } else if ((input->button_state & 0x08) & (last_btn_state ^ 0x08)) {
-            startLfo(SAW_ALT);
+            startLfo(LASER_SAW);
         } else if ((input->button_state & 0x02) & (last_btn_state ^ 0x02)) {
             startLfo(SAW_WOOP);
         } else if (trigger_flag) {
@@ -424,11 +450,9 @@ void loop () {
         // spiDma->printReadBuffer(0);
 
         Serial.println("");
-        Serial.println(input->pot_data.delay_wet);
-        Serial.println(input->pot_data.delay_feedback);
-        Serial.println(delay_wet, HEX);
-        Serial.println(delay_dry, HEX);
-        Serial.println(delay_feedback, HEX);
-        Serial.println(delay_time);
+        Serial.println(digitalRead(PIN_SWITCH));
+        // Serial.println(isr_dt);
+        // Serial.println(I2S->INTFLAG.reg, HEX);
+        // I2S->INTFLAG.reg = 0xFFFF;
     }
 }

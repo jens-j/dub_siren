@@ -1,7 +1,7 @@
 #include <math.h>
 #include "dubsiren.h"
 #include "fixedpoint.h"
-#include "sine.h"
+#include "waveforms.h"
 
 #ifndef __BIQUAD_H
 #define __BIQUAD_H

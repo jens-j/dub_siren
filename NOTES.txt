@@ -1,1 +1,14 @@
-- timer interrupt for filter and tone sweep
+TODO
+- led pwm
+- frequency sweep
+- time isr loop using timer 
+- better whoop
+
+IDEAS
+- chord switch
+- lfo range switch
+- delay filter  
+
+ISSUES
+- sine_h3 with chord clips
+- pot stability

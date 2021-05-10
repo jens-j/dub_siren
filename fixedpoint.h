@@ -142,6 +142,15 @@ inline qs15_t rshift1_qs15 (qs15_t x) {
     }
 }
 
+inline qs15_t rshift2_qs15 (qs15_t x) {
+
+    if (x & 0x8000) {
+        return 0xC000 | (x >> 2);
+    } else {
+        return x >> 2;
+    }
+}
+
 inline int16_t clip_uint32_uint16 (int32_t x) {
 
     if (x & 0xFFFF0000) { // detect overflow
