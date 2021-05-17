@@ -29,6 +29,7 @@ volatile bool trigger_flag       = false;
 // oscillator variables
 qu16_t osc_setpoint              = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
+volatile qu32_t sub_phase        = 0;
 volatile qu32_t osc_third_phase  = 0;
 volatile qu32_t osc_fifth_phase  = 0;
 volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
@@ -241,8 +242,9 @@ void I2S_Handler() {
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
-    osc_third_phase += osc_step + (osc_step >> 2);
-    osc_fifth_phase += osc_step + (osc_step >> 1);
+    sub_phase += osc_step >> 1;
+    // osc_third_phase += osc_step + (osc_step >> 2);
+    // osc_fifth_phase += osc_step + (osc_step >> 1);
     lfo_phase += lfo_step;
 
     // decrease decay coefficient
@@ -272,14 +274,10 @@ void I2S_Handler() {
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // calculate oscillator value
-    //qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase, osc_third_phase, osc_fifth_phase);
-
     qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
 
     if (digitalRead(PIN_SWITCH)) {
-        amplitude = rshift2_qs15(amplitude)
-                    + rshift2_qs15(getAmplitude(input->osc_waveform, osc_third_phase))
-                    + rshift2_qs15(getAmplitude(input->osc_waveform, osc_fifth_phase));
+        amplitude += getAmplitude(input->osc_waveform, sub_phase);
     }
 
     // update the filter
