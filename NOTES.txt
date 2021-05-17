@@ -3,11 +3,14 @@ TODO
 - frequency sweep
 - time isr loop using timer 
 - better whoop
+- better delay mix
 
 IDEAS
 - chord switch
 - lfo range switch
 - delay filter  
+- center dent pot for depth with dent at 2x
+- filter sweep limit
 
 ISSUES
 - sine_h3 with chord clips

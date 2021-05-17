@@ -153,7 +153,7 @@ qs15_t inline getSineAmplitude(qu32_t phase) {
 
 
 // return the amplitude in [-1 - 1]
-qs15_t inline getMonoAmplitude(waveform_t waveform, qu32_t phase) {
+qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 
     uint16_t index;
     qs15_t local_phase;
@@ -193,6 +193,7 @@ qs15_t inline getMonoAmplitude(waveform_t waveform, qu32_t phase) {
             }
 
         case SINE:
+        case CHORD:
             return getSineAmplitude(phase);
 
         case SINE_H3:
@@ -204,35 +205,38 @@ qs15_t inline getMonoAmplitude(waveform_t waveform, qu32_t phase) {
             if (phase >= QU32_ONE / 2) {
                 return QS15_MINUS_ONE;
             } else {
-                return getMonoAmplitude(SQUARE, phase << 3);
+                return getAmplitude(SQUARE, phase << 3);
             }
 
         case LASER_SAW:
             if (phase >= QU32_ONE / 2) {
                 return QS15_MINUS_ONE;
             } else {
-                return getMonoAmplitude(SAW_DOWN, phase << 3);
+                return getAmplitude(SAW_DOWN, phase << 3);
             }
     }
 }
 
 
-qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase, qu32_t phase_third, qu32_t phase_fifth) {
-
-    if (waveform == CHORD) {
-        return rshift1_qs15(getSineAmplitude(phase))
-               + rshift1_qs15(getSineAmplitude(phase_third))
-               + rshift1_qs15(getSineAmplitude(phase_fifth));
-    } else {
-        return getMonoAmplitude(waveform, phase);
-    }
-}
+// qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase, qu32_t phase_third, qu32_t phase_fifth) {
+//
+//     if (waveform == CHORD) {
+//         return rshift1_qs15(getSineAmplitude(phase))
+//                + rshift1_qs15(getSineAmplitude(phase_third))
+//                + rshift1_qs15(getSineAmplitude(phase_fifth));
+//     } else {
+//         return getMonoAmplitude(waveform, phase);
+//     }
+// }
 
 
 void I2S_Handler() {
 
     // isr_t0 = micros();
 
+    // write sample in compact stereo mode, interrupt flag is cleared automatically
+    // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
+    // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
     I2S->DATA[0].reg = output_sample;
 
     // update oscillator and lfo phase. these overflow naturally
@@ -259,7 +263,7 @@ void I2S_Handler() {
     }
 
     // get lfo value
-    qs15_t lfo_value = getMonoAmplitude(lfo_shape, lfo_phase);
+    qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
     lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2; // normalize waveforms to [0, 1] for lfo
 
     // calculate oscillator velocity
@@ -268,11 +272,18 @@ void I2S_Handler() {
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // calculate oscillator value
-    qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase, osc_third_phase, osc_fifth_phase);
-    //qs15_t amplitude = getMonoAmplitude(input->osc_waveform, osc_phase);
-    dsvf_x = mul_qs15_int16(amplitude, OSC_AMP);
+    //qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase, osc_third_phase, osc_fifth_phase);
+
+    qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
+
+    if (digitalRead(PIN_SWITCH)) {
+        amplitude = rshift2_qs15(amplitude)
+                    + rshift2_qs15(getAmplitude(input->osc_waveform, osc_third_phase))
+                    + rshift2_qs15(getAmplitude(input->osc_waveform, osc_fifth_phase));
+    }
 
     // update the filter
+    dsvf_x = mul_qs15_int16(amplitude, OSC_AMP);
     dsvf_y = mul_qs15_int16(dsvf_f, dsvf_r0) + dsvf_r1;
     dsvf_r1 = dsvf_y;
     dsvf_r0 = mul_qs15_int16(dsvf_f, (dsvf_x - dsvf_y - mul_qs15_int16(dsvf_q, dsvf_r0))) + dsvf_r0;
@@ -287,15 +298,13 @@ void I2S_Handler() {
     feedback_sample = mul_qs15_int16(delay_feedback, feedback_sample);
     spiDma->write_buffer[active_buffer].data[buffer_index] =
         add_uint16_clip(release_sample, feedback_sample);
-
     delay_mix = add_uint16_clip(
         mul_qs15_int16(delay_dry, release_sample), mul_qs15_int16(delay_wet, feedback_sample));
 
-    // write sample in compact stereo mode, interrupt flag is cleared automatically
-    // uint16_t sample = spiDma->read_buffer[active_buffer].data[buffer_index];
-    // I2S->DATA[0].reg = (uint32_t) sample << 16 | sample;
+    // store sample for next loop
     output_sample = (uint32_t) delay_mix << 16 | delay_mix;
 
+    // check delay buffer update
     if (++buffer_index == SPI_BLOCK_SIZE) {
         buffer_index = 0;
         active_buffer = 1 - active_buffer;
@@ -393,9 +402,16 @@ void loop () {
     }
 
     // calculate delay coefficients
-    uint16_t norm_delay_wet_reading = uint16_to_qu16(input->pot_data.delay_wet) >> ADC_RES_LOG2;
-    delay_wet = mul_qu16(norm_delay_wet_reading, float_to_qu16(DELAY_WET_MAX));
-    delay_dry = QU16_ONE - delay_wet;
+    uint16_t delay_wet_reading = input->pot_data.delay_wet; // [0 - 1023]
+    qu16_t norm_delay_wet_reading = uint16_to_qu16(delay_wet_reading) >> (ADC_RES_LOG2 - 1); // [0 - 2]
+    if (norm_delay_wet_reading < QU16_ONE) {
+        delay_dry = QU16_ONE;
+        delay_wet = mul_qu16(norm_delay_wet_reading, QU16_ONE);
+    } else {
+        delay_dry = QU16_ONE - mul_qu16(norm_delay_wet_reading - QU16_ONE, QU16_ONE);
+        delay_wet = QU16_ONE;
+    }
+
     uint16_t norm_delay_feedback_reading = uint16_to_qu16(input->pot_data.delay_feedback) >> ADC_RES_LOG2;
     delay_feedback = mul_qu16(norm_delay_feedback_reading, float_to_qu16(DELAY_FEEDBACK_MAX));
     delay_time = ((input->pot_data.delay_time * DELAY_TIME_RANGE) >> 10) + DELAY_TIME_MIN; // updated in the dma isr
