@@ -24,6 +24,7 @@ inline qs15_t qu16_to_qs15 (qu16_t x) {return (qs15_t) (x >> 1);}
 inline qu8_t qu16_to_qu8 (qu16_t x) {return (qu8_t) (x >> 8);}
 inline uint16_t qu16_to_uint16 (qu16_t x) {return (uint16_t) (x >> 16);}
 
+inline qu16_t qs15_to_qu16 (qs15_t x) {return (qu16_t) (x << 1);}
 inline qs12_t qs15_to_qs12 (qs15_t x) {return (qs12_t) (x >> 3);}
 
 inline qs12_t qu8_to_qs12 (qu8_t x) {return (qs12_t) (x << 4);}

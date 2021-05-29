@@ -9,6 +9,8 @@
 #include "waveforms.h"
 #include "biquad.h"
 #include "dsvf.h"
+#include "timer.h"
+
 
 Input *input;
 SpiDma *spiDma;
@@ -55,13 +57,18 @@ float sweep_offset               = 0.0;
 float sweep_rate                 = 0.0;
 float resonance                  = RESONANCE_MIN;
 uint32_t sweep_t0                = 0;
-
 qs15_t dsvf_f                    = 0;
 qs15_t dsvf_q                    = 0;
 uint16_t dsvf_x                  = 0;
 uint16_t dsvf_y                  = 0;
 uint16_t dsvf_r0                 = 0;
 uint16_t dsvf_r1                 = 0;
+
+// lfsr variables
+uint16_t lfsr_value              = 0xFFFF;
+qs15_t lfsr_output               = 0;
+uint16_t lfsr_counter            = 0;
+qu32_t lfsr_phase                = 0; // used to detect new period
 
 // delay variables
 qs15_t delay_feedback            = float_to_qs15(0.75);
@@ -106,6 +113,8 @@ void setup () {
     spiDma = new SpiDma();
 
     setupI2S();
+    //setupTimer();
+    TC4->COUNT16.CC[0].reg = 0x8000;
 
     for (uint16_t i = 0; i < SPI_BLOCK_SIZE; i++) {
         spiDma->write_buffer[0].data[i] = i + 0x100;
@@ -137,7 +146,16 @@ void DMAC_Handler () {
 }
 
 
-qs15_t inline getSineAmplitude(qu32_t phase) {
+inline uint16_t update_lfsr (uint16_t input) {
+    uint16_t b10 = input >> 10;
+    uint16_t b12 = input >> 12;
+    uint16_t b13 = input >> 13;
+    uint16_t b15 = input >> 15;
+    return (input << 1) + ((b10 ^ b12 ^ b13 ^ b15) & 1);
+}
+
+
+qs15_t inline getSineAmplitude (qu32_t phase) {
 
     uint16_t index = mul_qu32_uint16(phase, SINE_SAMPLES * 4) & (SINE_SAMPLES - 1);
 
@@ -215,6 +233,16 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
             } else {
                 return getAmplitude(SAW_DOWN, phase << 3);
             }
+
+        case RANDOM:
+            if (phase < lfsr_phase) { // new period, update value
+                lfsr_output = (qs15_t) lfsr_value;
+                lfsr_counter = 0;
+            } else if (++lfsr_counter <= 16) {
+                lfsr_value = update_lfsr(lfsr_value);
+            }
+            lfsr_phase = phase;
+            return lfsr_output;
     }
 }
 
@@ -243,8 +271,6 @@ void I2S_Handler() {
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
     sub_phase += osc_step >> 1;
-    // osc_third_phase += osc_step + (osc_step >> 2);
-    // osc_fifth_phase += osc_step + (osc_step >> 1);
     lfo_phase += lfo_step;
 
     // decrease decay coefficient
@@ -313,6 +339,10 @@ void I2S_Handler() {
         }
     }
 
+    // update LFO LED
+    // TC4->COUNT16.CC[0].reg = (uint16_t) qs15_to_qu16(lfo_value);
+
+    // flag external trigger
     trigger_flag = trigger_flag || digitalRead(PIN_TRIGGER) == 0;
 
     // isr_dt = micros() - isr_t0;
@@ -364,7 +394,7 @@ void loop () {
         } else if ((input->button_state & 0x08) & (last_btn_state ^ 0x08)) {
             startLfo(LASER_SAW);
         } else if ((input->button_state & 0x02) & (last_btn_state ^ 0x02)) {
-            startLfo(SAW_WOOP);
+            startLfo(RANDOM);
         } else if (trigger_flag) {
             trigger_flag = false;
             startLfo(lfo_shape);
@@ -464,7 +494,7 @@ void loop () {
         // spiDma->printReadBuffer(0);
 
         Serial.println("");
-        Serial.println(digitalRead(PIN_SWITCH));
+        Serial.println(lfsr_output, HEX);
         // Serial.println(isr_dt);
         // Serial.println(I2S->INTFLAG.reg, HEX);
         // I2S->INTFLAG.reg = 0xFFFF;

@@ -24,6 +24,7 @@
 #define GLCK_I2S            3
 #define GCLK_ADC            4
 #define GLCK_SPI            5
+#define GLCK_TCC            6
 
 #define CLOCK_RATE          48000000UL
 #define MAIN_LOOP_MS        200
@@ -37,7 +38,7 @@
 #define OSC_FREQ_MAX        1000.0
 #define OSC_FREQ_RANGE      (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX         32767 // 16 bit signed
-#define OSC_AMP             5000
+#define OSC_AMP             2500
 #define GLIDE_RATE          (QS15_ONE >> 2) // frequency change rate in Hz/sample
 
 #define LFO_FREQ_MIN        0.2
@@ -75,6 +76,6 @@
 #define PI                  3.141593
 
 enum waveform_t {SINE, SINE_H3, CHORD, SAW_UP, SAW_DOWN, SAW_WOOP, CAPACITOR,
-                 SQUARE, PULSE, LASER_SAW, LASER_SQUARE};
+                 SQUARE, PULSE, LASER_SAW, LASER_SQUARE, RANDOM};
 
 #endif

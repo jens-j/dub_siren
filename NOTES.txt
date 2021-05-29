@@ -1,17 +1,17 @@
 TODO
 - led pwm
 - frequency sweep
-- time isr loop using timer 
+- time isr loop using timer
 - better whoop
-- better delay mix
+- better clipping
 
 IDEAS
-- chord switch
+- random lfo
 - lfo range switch
-- delay filter  
+- delay filter
 - center dent pot for depth with dent at 2x
 - filter sweep limit
 
 ISSUES
-- sine_h3 with chord clips
+- sine_h3 takes too long -> make table
 - pot stability
