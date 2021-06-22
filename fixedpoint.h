@@ -66,6 +66,14 @@ inline uint16_t add_uint16_clip(uint16_t x, uint16_t y) {
 // multiply two qu16_t values
 inline qu16_t mul_qu16 (qu16_t x, qu16_t y) {
 
+    // qu16_t z = x * y >> 16;
+    //
+    // if (z & 0x8000) {
+    //     z |= 0xFFFF0000;
+    // }
+    //
+    // return z;
+
     return x * y >> 16;
 }
 

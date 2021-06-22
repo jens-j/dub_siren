@@ -3,7 +3,9 @@
 
 #define PIN_BOARD_LED       32
 #define PIN_LFO_LED         6
-#define PIN_SWITCH          0
+#define PIN_SW_SUB          14
+#define PIN_SW_RANGE        A3
+#define PIN_SW_SWEEP        0
 #define PIN_TRIGGER         12
 #define PIN_ADC_CH0         A5
 #define PIN_ADC_CH1         A4
@@ -27,7 +29,7 @@
 #define GLCK_TCC            6
 
 #define CLOCK_RATE          48000000UL
-#define MAIN_LOOP_MS        200
+#define PRINT_MS            500
 #define ADC_RES             1024
 #define ADC_RES_LOG2        10
 #define SAMPLE_RATE         48000UL
@@ -42,8 +44,10 @@
 #define GLIDE_RATE          (QS15_ONE >> 2) // frequency change rate in Hz/sample
 
 #define LFO_FREQ_MIN        0.2
-#define LFO_FREQ_MAX        64.0
-#define LFO_FREQ_RANGE      (LFO_FREQ_MAX - LFO_FREQ_MIN)
+#define LFO_FREQ_MAX_LOW    16.0
+#define LFO_FREQ_MAX_HIGH   187.0 // higher than this overflows somehow
+#define LFO_FREQ_RANGE_LOW  (LFO_FREQ_MAX_LOW - LFO_FREQ_MIN)
+#define LFO_FREQ_RANGE_HIGH (LFO_FREQ_MAX_HIGH - LFO_FREQ_MIN)
 #define LFO_DEPTH_MIN       0.0
 #define LFO_DEPTH_MAX       4.0
 #define LFO_DEPTH_RANGE     (LFO_DEPTH_MAX - LFO_DEPTH_MIN)
@@ -54,7 +58,7 @@
 #define RESONANCE_MIN       1.0 // lower leads to unstable filter due to coefficient rounding
 #define RESONANCE_MAX       8.0
 #define RESONANCE_RANGE     (RESONANCE_MAX - RESONANCE_MIN)
-#define SWEEP_MAX           1.0 // RESONANCE_RANGE / s
+#define SWEEP_MAX           1.0 // FILTER_RANGE / s
 
 #define DECAY_MAX           5.0 // seconds
 
@@ -75,7 +79,7 @@
 
 #define PI                  3.141593
 
-enum waveform_t {SINE, SINE_H3, CHORD, SAW_UP, SAW_DOWN, SAW_WOOP, CAPACITOR,
+enum waveform_t {SINE, SINE_H3, CHORD, SAW_UP, SAW_DOWN, SAW_WHOOP, CAPACITOR,
                  SQUARE, PULSE, LASER_SAW, LASER_SQUARE, RANDOM};
 
 #endif

@@ -30,6 +30,9 @@ volatile bool trigger_flag       = false;
 
 // oscillator variables
 qu16_t osc_setpoint              = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
+qu16_t osc_setpoint_sweep        = uint16_to_qu16(1000);
+qu16_t osc_sweep_offset          = 0.0;
+float osc_sweep_rate             = 0.0;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile qu32_t sub_phase        = 0;
 volatile qu32_t osc_third_phase  = 0;
@@ -38,7 +41,9 @@ volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current v
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
 volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
 
+
 // lfo variables
+qs15_t lfo_value                 = 0;
 waveform_t lfo_shape             = SQUARE;
 qu8_t lfo_frequency              = float_to_qu8(2.0);
 qu32_t lfo_step                  = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
@@ -53,8 +58,8 @@ uint16_t release_sample          = 0;
 
 // filter variables
 float cutoff                     = FILTER_MAX;
-float sweep_offset               = 0.0;
-float sweep_rate                 = 0.0;
+float cutoff_sweep_offset        = 0.0;
+float cutoff_sweep_rate          = 0.0;
 float resonance                  = RESONANCE_MIN;
 uint32_t sweep_t0                = 0;
 qs15_t dsvf_f                    = 0;
@@ -87,7 +92,9 @@ void setup () {
     pinMode(PIN_ADC_CH0, INPUT);
     pinMode(PIN_ADC_CH1, INPUT);
     pinMode(PIN_SREG_DATA, INPUT);
-    pinMode(PIN_SWITCH, INPUT);
+    pinMode(PIN_SW_SUB, INPUT);
+    pinMode(PIN_SW_RANGE, INPUT);
+    pinMode(PIN_SW_SWEEP, INPUT);
     pinMode(PIN_TRIGGER, INPUT);
     pinMode(PIN_BOARD_LED, OUTPUT);
     pinMode(PIN_LFO_LED, OUTPUT);
@@ -105,6 +112,7 @@ void setup () {
 
     digitalWrite(PIN_SREG_LATCH, HIGH);
     digitalWrite(PIN_SREG_CLK, LOW);
+    //digitalWrite(PIN_LFO_LED, LOW);
 
     Serial.begin(115200);
     // while (!Serial); // wait for a serial connection (terminal)
@@ -113,7 +121,7 @@ void setup () {
     spiDma = new SpiDma();
 
     setupI2S();
-    //setupTimer();
+    setupTimer();
     TC4->COUNT16.CC[0].reg = 0x8000;
 
     for (uint16_t i = 0; i < SPI_BLOCK_SIZE; i++) {
@@ -194,7 +202,7 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
         case SAW_UP:
            return QS15_MINUS_ONE + qu32_to_qs15(phase) + qu32_to_qs15(phase);
 
-        case SAW_WOOP:
+        case SAW_WHOOP:
             if (phase < QU32_ONE / 3) {
                 local_phase = qu32_to_qs15(phase);
             } else { // amp = 1.375 * phase - 0.375 (with phase normalized to 0.5..1)
@@ -247,18 +255,6 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
 }
 
 
-// qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase, qu32_t phase_third, qu32_t phase_fifth) {
-//
-//     if (waveform == CHORD) {
-//         return rshift1_qs15(getSineAmplitude(phase))
-//                + rshift1_qs15(getSineAmplitude(phase_third))
-//                + rshift1_qs15(getSineAmplitude(phase_fifth));
-//     } else {
-//         return getMonoAmplitude(waveform, phase);
-//     }
-// }
-
-
 void I2S_Handler() {
 
     // isr_t0 = micros();
@@ -291,8 +287,8 @@ void I2S_Handler() {
     }
 
     // get lfo value
-    qs15_t lfo_value = getAmplitude(lfo_shape, lfo_phase);
-    lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2; // normalize waveforms to [0, 1] for lfo
+    lfo_value = getAmplitude(lfo_shape, lfo_phase);
+    lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2 + 1; // normalize waveforms to [0, 1] for lfo
 
     // calculate oscillator velocity
     mod_frequency = mul_qs15_int16(mul_qs12_qs15(lfo_depth, lfo_value),
@@ -302,7 +298,7 @@ void I2S_Handler() {
     // calculate oscillator value
     qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
 
-    if (digitalRead(PIN_SWITCH)) {
+    if (!digitalRead(PIN_SW_SUB)) {
         amplitude += getAmplitude(input->osc_waveform, sub_phase);
     }
 
@@ -340,7 +336,7 @@ void I2S_Handler() {
     }
 
     // update LFO LED
-    // TC4->COUNT16.CC[0].reg = (uint16_t) qs15_to_qu16(lfo_value);
+    TCC0->CC[0].bit.CC = (uint16_t) qs15_to_qu16(lfo_value);
 
     // flag external trigger
     trigger_flag = trigger_flag || digitalRead(PIN_TRIGGER) == 0;
@@ -375,7 +371,8 @@ void loop () {
         } else {
             trigger_state = true;
             release_value = QU32_ONE;
-            sweep_offset = 0.0;
+            cutoff_sweep_offset = 0.0;
+            osc_sweep_offset = 0;
             sweep_t0 = micros();
         }
 
@@ -411,8 +408,10 @@ void loop () {
     // calculate lfo frequency
     qu16_t norm_lfo_reading = uint16_to_qu16(input->pot_data.lfo_frequency) >> ADC_RES_LOG2;
     norm_lfo_reading = mul_qu16(norm_lfo_reading, norm_lfo_reading);
-    lfo_frequency = mul_qu8(qu16_to_qu8(norm_lfo_reading), float_to_qu8(LFO_FREQ_RANGE))
-        + float_to_qu8(LFO_FREQ_MIN);
+
+    float range = digitalRead(PIN_SW_RANGE) ? LFO_FREQ_RANGE_LOW : LFO_FREQ_RANGE_HIGH;
+    lfo_frequency = mul_qu8(qu16_to_qu8(norm_lfo_reading), float_to_qu8(range));
+    lfo_frequency += float_to_qu8(LFO_FREQ_MIN);
     lfo_step = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE);
 
     // calculate lfo mod depth coefficient
@@ -448,19 +447,30 @@ void loop () {
     cutoff = input->pot_data.filter_cutoff / 1024.0 * FILTER_RANGE + FILTER_MIN;
     resonance = input->pot_data.filter_resonance / 1024.0 * RESONANCE_RANGE + RESONANCE_MIN;
 
-    // sweep rate [-SWEEP_MAX, SWEEP_MAX]
-    sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * SWEEP_MAX * FILTER_RANGE;
-
-    // update sweep offset
+    // update sweep offsets
+    cutoff_sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * SWEEP_MAX * FILTER_RANGE;
+    osc_sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * SWEEP_MAX * OSC_FREQ_RANGE;
+    float dt;
     if (!trigger_state) {
         uint32_t sweep_t1 = micros();
-        float dt = (sweep_t1 - sweep_t0) * 1E-6;
-        sweep_offset += dt * sweep_rate;
+        dt = (sweep_t1 - sweep_t0) * 1E-6;
+        cutoff_sweep_offset += dt * cutoff_sweep_rate;
+        osc_sweep_offset += mul_qu16(float_to_qu16(dt), float_to_qu16(osc_sweep_rate));
         sweep_t0 = sweep_t1;
     }
 
-    float sweep_cutoff = constrain(cutoff + sweep_offset, FILTER_MIN, FILTER_MAX);
-    get_dsvf_coeffs(sweep_cutoff,resonance , &dsvf_f, &dsvf_q);
+    // update sweep frequency
+    uint16_t temp_setpoint = osc_setpoint + osc_sweep_offset;
+    if (temp_setpoint > float_to_qu16(OSC_FREQ_MAX)) {
+        temp_setpoint = float_to_qu16(OSC_FREQ_MAX);
+    } else if (temp_setpoint < float_to_qu16(OSC_FREQ_MIN)) {
+        temp_setpoint = float_to_qu16(OSC_FREQ_MIN);
+    }
+    osc_setpoint_sweep = temp_setpoint;
+
+    // update filter coefficients
+    float sweep_cutoff = constrain(cutoff + cutoff_sweep_offset, FILTER_MIN, FILTER_MAX);
+    get_dsvf_coeffs(sweep_cutoff, resonance, &dsvf_f, &dsvf_q);
 
     if (dma_state == DMA_WRITE_A) {
         dma_state = DMA_WRITE_B;
@@ -480,23 +490,17 @@ void loop () {
     // Serial.print(" ");
     // Serial.println(write_address, HEX);
 
-    if (t - led_t0 > MAIN_LOOP_MS) {
+    if (t - led_t0 > PRINT_MS) {
 
         digitalWrite(PIN_LED, led_state);
         led_state = !led_state;
-        led_t0 += MAIN_LOOP_MS;
-
-        // Serial.print("write: ");
-        // Serial.println(write_address, HEX);
-        // spiDma->printWriteBuffer(0);
-        // Serial.print("read:  ");
-        // Serial.println(read_address, HEX);
-        // spiDma->printReadBuffer(0);
+        led_t0 += PRINT_MS;
 
         Serial.println("");
-        Serial.println(lfsr_output, HEX);
-        // Serial.println(isr_dt);
-        // Serial.println(I2S->INTFLAG.reg, HEX);
-        // I2S->INTFLAG.reg = 0xFFFF;
+        Serial.println(TCC0->CC[0].bit.CC, HEX);
+        Serial.println(TCC0->STATUS.reg, HEX);
+        Serial.println(lfo_value);
+        Serial.println(qs15_to_float(lfo_value));
+
     }
 }
