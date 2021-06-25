@@ -32,7 +32,7 @@
 #define PRINT_MS            500
 #define ADC_RES             1024
 #define ADC_RES_LOG2        10
-#define SAMPLE_RATE         48000UL
+#define SAMPLE_RATE         44117UL
 #define POT_DEAD_ZONE       3
 #define BTN_TIME            20 // ms
 
@@ -41,6 +41,7 @@
 #define OSC_FREQ_RANGE      (OSC_FREQ_MAX - OSC_FREQ_MIN)
 #define OSC_AMP_MAX         32767 // 16 bit signed
 #define OSC_AMP             2500
+#define OSC_SWEEP_MAX       (OSC_FREQ_RANGE / 2.0) // change / s
 #define GLIDE_RATE          (QS15_ONE >> 2) // frequency change rate in Hz/sample
 
 #define LFO_FREQ_MIN        0.2
@@ -58,7 +59,7 @@
 #define RESONANCE_MIN       1.0 // lower leads to unstable filter due to coefficient rounding
 #define RESONANCE_MAX       8.0
 #define RESONANCE_RANGE     (RESONANCE_MAX - RESONANCE_MIN)
-#define SWEEP_MAX           1.0 // FILTER_RANGE / s
+#define FILTER_SWEEP_MAX    OSC_FREQ_RANGE // change / s
 
 #define DECAY_MAX           5.0 // seconds
 
@@ -67,7 +68,6 @@
 #define DELAY_TIME_MAX      (RAM_BYTES / SPI_BLOCK_BYTES) // ~1.365 s
 #define DELAY_TIME_RANGE    (DELAY_TIME_MAX - DELAY_TIME_MIN)
 #define DELAY_FEEDBACK_MAX  0.5
-
 
 #define RAM_BYTES           (1 << 17)
 #define RAM_SAMPLES         (RAM_BYTES >> 1)

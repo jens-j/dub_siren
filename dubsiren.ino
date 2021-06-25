@@ -29,10 +29,10 @@ bool trigger_state               = false;
 volatile bool trigger_flag       = false;
 
 // oscillator variables
-qu16_t osc_setpoint              = uint16_to_qu16(1000); // base frequency setpoint, set by PIN_OSC_POT
-qu16_t osc_setpoint_sweep        = uint16_to_qu16(1000);
-qu16_t osc_sweep_offset          = 0.0;
-float osc_sweep_rate             = 0.0;
+qu16_t osc_setpoint              = 0; // base frequency setpoint set by knob
+qu16_t osc_setpoint_sweep        = 0; // setpoint + sweep offset
+qs15_t osc_sweep_offset          = 0.0;
+qs15_t osc_sweep_step            = 0.0;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile qu32_t sub_phase        = 0;
 volatile qu32_t osc_third_phase  = 0;
@@ -45,8 +45,8 @@ volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1
 // lfo variables
 qs15_t lfo_value                 = 0;
 waveform_t lfo_shape             = SQUARE;
-qu8_t lfo_frequency              = float_to_qu8(2.0);
-qu32_t lfo_step                  = mul_qu8_uint32(lfo_frequency, QU32_ONE / SAMPLE_RATE); // phase change per sample
+qu8_t lfo_frequency              = 0;
+qu32_t lfo_step                  = 0; // phase change per sample
 qs12_t lfo_depth                 = 0;
 volatile qu32_t lfo_phase        = 0;
 
@@ -278,8 +278,29 @@ void I2S_Handler() {
         }
     }
 
+    // update oscillator sweep
+    if (!digitalRead(PIN_SW_SWEEP)) {
+        osc_sweep_offset += osc_sweep_step;
+        if (osc_sweep_offset > float_to_qs15(OSC_FREQ_RANGE)) {
+            osc_sweep_offset = float_to_qs15(OSC_FREQ_RANGE);
+        } else if (qs_invert(osc_sweep_offset) > float_to_qs15(OSC_FREQ_RANGE)) {
+            osc_sweep_offset = qs_invert(float_to_qs15(OSC_FREQ_RANGE));
+        }
+    } else {
+        osc_sweep_offset = 0;
+    }
+
+    qs15_t sweep_sum = qu16_to_qs15(osc_setpoint) + osc_sweep_offset;
+    if (sweep_sum < float_to_qs15(OSC_FREQ_MIN)) {
+        osc_setpoint_sweep = float_to_qu16(OSC_FREQ_MIN);
+    } else if (sweep_sum > float_to_qs15(OSC_FREQ_MAX)) {
+        osc_setpoint_sweep = float_to_qu16(OSC_FREQ_MAX);
+    } else {
+        osc_setpoint_sweep = qs15_to_qu16(sweep_sum);
+    }
+
     // update oscillator frequency (glide)
-    qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint) - qu16_to_qs15(osc_frequency);
+    qs15_t osc_frequency_diff = qu16_to_qs15(osc_setpoint_sweep) - qu16_to_qs15(osc_frequency);
     if (osc_frequency_diff & 0x80000000) {
         osc_frequency -= min(qs_invert(osc_frequency_diff), GLIDE_RATE);
     } else {
@@ -448,25 +469,20 @@ void loop () {
     resonance = input->pot_data.filter_resonance / 1024.0 * RESONANCE_RANGE + RESONANCE_MIN;
 
     // update sweep offsets
-    cutoff_sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * SWEEP_MAX * FILTER_RANGE;
-    osc_sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * SWEEP_MAX * OSC_FREQ_RANGE;
+    cutoff_sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * FILTER_SWEEP_MAX;
     float dt;
     if (!trigger_state) {
         uint32_t sweep_t1 = micros();
         dt = (sweep_t1 - sweep_t0) * 1E-6;
         cutoff_sweep_offset += dt * cutoff_sweep_rate;
-        osc_sweep_offset += mul_qu16(float_to_qu16(dt), float_to_qu16(osc_sweep_rate));
         sweep_t0 = sweep_t1;
     }
 
-    // update sweep frequency
-    uint16_t temp_setpoint = osc_setpoint + osc_sweep_offset;
-    if (temp_setpoint > float_to_qu16(OSC_FREQ_MAX)) {
-        temp_setpoint = float_to_qu16(OSC_FREQ_MAX);
-    } else if (temp_setpoint < float_to_qu16(OSC_FREQ_MIN)) {
-        temp_setpoint = float_to_qu16(OSC_FREQ_MIN);
-    }
-    osc_setpoint_sweep = temp_setpoint;
+    // update frequency sweep parameters
+    float norm_sweep_reading = input->pot_data.filter_sweep / 512.0 - 1.0;
+    norm_sweep_reading = norm_sweep_reading * norm_sweep_reading * (norm_sweep_reading / abs(norm_sweep_reading));
+    float osc_sweep_rate = norm_sweep_reading * OSC_SWEEP_MAX;
+    osc_sweep_step = float_to_qs15(osc_sweep_rate / SAMPLE_RATE);
 
     // update filter coefficients
     float sweep_cutoff = constrain(cutoff + cutoff_sweep_offset, FILTER_MIN, FILTER_MAX);
@@ -497,10 +513,10 @@ void loop () {
         led_t0 += PRINT_MS;
 
         Serial.println("");
-        Serial.println(TCC0->CC[0].bit.CC, HEX);
-        Serial.println(TCC0->STATUS.reg, HEX);
-        Serial.println(lfo_value);
-        Serial.println(qs15_to_float(lfo_value));
-
+        Serial.println(osc_sweep_rate);
+        Serial.println(qs15_to_float(osc_sweep_step));
+        Serial.println(qs15_to_float(osc_sweep_offset));
+        Serial.println(osc_setpoint_sweep, HEX);
+        Serial.println(qu16_to_float(osc_setpoint_sweep));
     }
 }

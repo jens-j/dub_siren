@@ -12,7 +12,7 @@
 #define QU32_ONE            0xffffffffUL
 
 typedef uint32_t qu8_t;  // unsigned [0 - 256) with 8 bit fractional precision
-typedef int32_t qs12_t;  // signed fixed point [-8, -8)
+typedef int16_t qs12_t;  // signed fixed point [-8, -8)
 typedef int32_t qs15_t;  // signed fixed point [-1 - 1)
 typedef uint32_t qu16_t; // unsigned fixed point [0 - 1)
 typedef uint32_t qu32_t; // unsigned fixed point [0 - 1)
@@ -25,7 +25,6 @@ inline qu8_t qu16_to_qu8 (qu16_t x) {return (qu8_t) (x >> 8);}
 inline uint16_t qu16_to_uint16 (qu16_t x) {return (uint16_t) (x >> 16);}
 
 inline qu16_t qs15_to_qu16 (qs15_t x) {return (qu16_t) (x << 1);}
-inline qs12_t qs15_to_qs12 (qs15_t x) {return (qs12_t) (x >> 3);}
 
 inline qs12_t qu8_to_qs12 (qu8_t x) {return (qs12_t) (x << 4);}
 inline uint32_t qu8_to_uint32 (qu8_t x) {return (uint32_t) (x >> 8);}
@@ -39,7 +38,7 @@ inline float qu8_to_float (qu8_t x) {return ((float) x) / 256.0;}
 inline float qs12_to_float (qs12_t x) {return ((float) x) / 4096.0;}
 inline float qs15_to_float (qs15_t x) {return ((float) x) / 32768.0;}
 inline float qu16_to_float (qu16_t x) {return ((float) x) / 65536.0;}
-inline float qu32_to_float (qu16_t x) {return ((float) x) / 4294967296.0;}
+inline float qu32_to_float (qu32_t x) {return ((float) x) / 4294967296.0;}
 
 inline qu8_t float_to_qu8 (float x) {return (qu8_t) (x * 0x100);}
 inline qs12_t float_to_qs12 (float x) {return (qs12_t) (x * 0x1000);}
@@ -49,6 +48,13 @@ inline qu32_t float_to_qu32 (float x) {return (qu32_t) (x * 0x100000000);}
 
 inline qs15_t qs_invert (qs15_t x) {return (~x) + 1;}
 
+
+inline qs12_t qs15_to_qs12 (qs15_t x) {
+
+    qs12_t y = (qs12_t) (x >> 3);
+
+    return y | (y & 0x1000) * 0x1110;
+}
 
 inline uint16_t add_uint16_clip(uint16_t x, uint16_t y) {
 
