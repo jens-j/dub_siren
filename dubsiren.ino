@@ -278,8 +278,8 @@ void I2S_Handler() {
         }
     }
 
-    // update oscillator sweep
-    if (!digitalRead(PIN_SW_SWEEP)) {
+    // update oscillator sweep offset
+    if (!digitalRead(PIN_SW_SWEEP) && !trigger_state) {
         osc_sweep_offset += osc_sweep_step;
         if (osc_sweep_offset > float_to_qs15(OSC_FREQ_RANGE)) {
             osc_sweep_offset = float_to_qs15(OSC_FREQ_RANGE);
@@ -290,6 +290,7 @@ void I2S_Handler() {
         osc_sweep_offset = 0;
     }
 
+    // add sweep offset to setpoint and clip
     qs15_t sweep_sum = qu16_to_qs15(osc_setpoint) + osc_sweep_offset;
     if (sweep_sum < float_to_qs15(OSC_FREQ_MIN)) {
         osc_setpoint_sweep = float_to_qu16(OSC_FREQ_MIN);
@@ -312,8 +313,7 @@ void I2S_Handler() {
     lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2 + 1; // normalize waveforms to [0, 1] for lfo
 
     // calculate oscillator velocity
-    mod_frequency = mul_qs15_int16(mul_qs12_qs15(lfo_depth, lfo_value),
-                                   qu16_to_uint16(osc_frequency));
+    mod_frequency = mul_qs15_int16(mul_qs12_qs15(lfo_depth, lfo_value), qu16_to_uint16(osc_frequency));
     osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // calculate oscillator value
@@ -469,7 +469,7 @@ void loop () {
     resonance = input->pot_data.filter_resonance / 1024.0 * RESONANCE_RANGE + RESONANCE_MIN;
 
     // update sweep offsets
-    cutoff_sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * FILTER_SWEEP_MAX;
+    cutoff_sweep_rate = (input->pot_data.filter_sweep / 512.0 - 1.0) * FILTER_SWEEP_RATE_MAX;
     float dt;
     if (!trigger_state) {
         uint32_t sweep_t1 = micros();
@@ -481,7 +481,7 @@ void loop () {
     // update frequency sweep parameters
     float norm_sweep_reading = input->pot_data.filter_sweep / 512.0 - 1.0;
     norm_sweep_reading = norm_sweep_reading * norm_sweep_reading * (norm_sweep_reading / abs(norm_sweep_reading));
-    float osc_sweep_rate = norm_sweep_reading * OSC_SWEEP_MAX;
+    float osc_sweep_rate = norm_sweep_reading * OSC_SWEEP_RATE_MAX;
     osc_sweep_step = float_to_qs15(osc_sweep_rate / SAMPLE_RATE);
 
     // update filter coefficients
@@ -500,12 +500,6 @@ void loop () {
 
     // blink led at 2 Hz
     int t = millis();
-
-    // // Serial.println(dma_state);
-    // Serial.print(read_address, HEX);
-    // Serial.print(" ");
-    // Serial.println(write_address, HEX);
-
     if (t - led_t0 > PRINT_MS) {
 
         digitalWrite(PIN_LED, led_state);

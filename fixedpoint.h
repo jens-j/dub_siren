@@ -12,7 +12,7 @@
 #define QU32_ONE            0xffffffffUL
 
 typedef uint32_t qu8_t;  // unsigned [0 - 256) with 8 bit fractional precision
-typedef int16_t qs12_t;  // signed fixed point [-8, -8)
+typedef int32_t qs12_t;  // signed fixed point [-8, -8)
 typedef int32_t qs15_t;  // signed fixed point [-1 - 1)
 typedef uint32_t qu16_t; // unsigned fixed point [0 - 1)
 typedef uint32_t qu32_t; // unsigned fixed point [0 - 1)
