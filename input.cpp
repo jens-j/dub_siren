@@ -38,7 +38,7 @@ void Input::update () {
     sreg_data = _readShiftRegister();
     button_state = sreg_data.button_data;
     if (sreg_data.encoder_data & 0x08) {osc_waveform = SINE;}
-    else if (sreg_data.encoder_data & 0x04) {osc_waveform = CHORD;}
+    else if (sreg_data.encoder_data & 0x04) {osc_waveform = SINE_H3;}
     else if (sreg_data.encoder_data & 0x01) {osc_waveform = CAPACITOR;}
     else if (sreg_data.encoder_data & 0x02) {osc_waveform = SAW_UP;}
     else if (sreg_data.encoder_data & 0x80) {osc_waveform = SQUARE;}

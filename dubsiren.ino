@@ -35,11 +35,9 @@ qs15_t osc_sweep_offset          = 0.0;
 qs15_t osc_sweep_step            = 0.0;
 volatile qu32_t osc_phase        = 0;                // always positive [0 - 1]
 volatile qu32_t sub_phase        = 0;
-volatile qu32_t osc_third_phase  = 0;
-volatile qu32_t osc_fifth_phase  = 0;
 volatile qu16_t osc_frequency    = osc_setpoint;     // base frequency current value
 volatile uint16_t mod_frequency  = 0;                // additive frequency shift from lfo
-volatile qu32_t osc_step         = osc_setpoint * (QU32_ONE / SAMPLE_RATE); // 1000 Hz phase change per sample
+volatile qu32_t osc_step         = 0;
 
 
 // lfo variables
@@ -163,18 +161,20 @@ inline uint16_t update_lfsr (uint16_t input) {
 }
 
 
-qs15_t inline getSineAmplitude (qu32_t phase) {
+
+
+qs15_t inline getSineAmplitude (qu32_t phase, const qs15_t *table) {
 
     uint16_t index = mul_qu32_uint16(phase, SINE_SAMPLES * 4) & (SINE_SAMPLES - 1);
 
     if (phase < QU32_ONE / 4) {
-        return SINE_TABLE[index];
+        return table[index];
     } else if (phase < QU32_ONE / 2) {
-        return SINE_TABLE[SINE_SAMPLES-index-1];
+        return table[SINE_SAMPLES-index-1];
     } else if (phase < QU32_ONE / 4 * 3) {
-        return qs_invert(SINE_TABLE[index]);
+        return qs_invert(table[index]);
     } else {
-        return qs_invert(SINE_TABLE[SINE_SAMPLES-index-1]);
+        return qs_invert(table[SINE_SAMPLES-index-1]);
     }
 }
 
@@ -220,13 +220,11 @@ qs15_t inline getAmplitude(waveform_t waveform, qu32_t phase) {
             }
 
         case SINE:
-        case CHORD:
-            return getSineAmplitude(phase);
+            return getSineAmplitude(phase, SINE_TABLE);
 
         case SINE_H3:
             // sine + 3rd overtone
-            return rshift1_qs15(getSineAmplitude(phase))
-                   + rshift1_qs15(getSineAmplitude(phase + phase + phase));
+            return getSineAmplitude(phase, SINE_H3_TABLE);
 
         case LASER_SQUARE:
             if (phase >= QU32_ONE / 2) {
@@ -266,12 +264,12 @@ void I2S_Handler() {
 
     // update oscillator and lfo phase. these overflow naturally
     osc_phase += osc_step;
-    sub_phase += osc_step >> 1;
+    sub_phase += osc_step >> 1 + 1; // add some detune
     lfo_phase += lfo_step;
 
     // decrease decay coefficient
     if (!trigger_state) {
-        if (release_step < release_value) {
+        if (release_step <= release_value) {
             release_value -= release_step;
         } else {
             release_value = 0;
@@ -310,11 +308,11 @@ void I2S_Handler() {
 
     // get lfo value
     lfo_value = getAmplitude(lfo_shape, lfo_phase);
-    lfo_value = rshift1_qs15(lfo_value) + QS15_ONE / 2 + 1; // normalize waveforms to [0, 1] for lfo
+    lfo_value = rshift1_qs15(lfo_value) + (QS15_ONE / 2) + 1; // normalize waveforms to [0, 1] for lfo
 
     // calculate oscillator velocity
     mod_frequency = mul_qs15_int16(mul_qs12_qs15(lfo_depth, lfo_value), qu16_to_uint16(osc_frequency));
-    osc_step = (uint16_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
+    osc_step = (qu32_t) (qu16_to_uint16(osc_frequency) + mod_frequency) * (QU32_ONE / SAMPLE_RATE);
 
     // calculate oscillator value
     qs15_t amplitude = getAmplitude(input->osc_waveform, osc_phase);
@@ -337,8 +335,7 @@ void I2S_Handler() {
     // update delay
     uint16_t feedback_sample = spiDma->read_buffer[active_buffer].data[buffer_index];
     feedback_sample = mul_qs15_int16(delay_feedback, feedback_sample);
-    spiDma->write_buffer[active_buffer].data[buffer_index] =
-        add_uint16_clip(release_sample, feedback_sample);
+    spiDma->write_buffer[active_buffer].data[buffer_index] = add_uint16_clip(release_sample, feedback_sample);
     delay_mix = add_uint16_clip(
         mul_qs15_int16(delay_dry, release_sample), mul_qs15_int16(delay_wet, feedback_sample));
 
@@ -394,6 +391,7 @@ void loop () {
             release_value = QU32_ONE;
             cutoff_sweep_offset = 0.0;
             osc_sweep_offset = 0;
+            osc_frequency = osc_setpoint;
             sweep_t0 = micros();
         }
 
@@ -507,10 +505,8 @@ void loop () {
         led_t0 += PRINT_MS;
 
         Serial.println("");
-        Serial.println(osc_sweep_rate);
-        Serial.println(qs15_to_float(osc_sweep_step));
+        Serial.println(digitalRead(PIN_SW_SWEEP));
         Serial.println(qs15_to_float(osc_sweep_offset));
-        Serial.println(osc_setpoint_sweep, HEX);
         Serial.println(qu16_to_float(osc_setpoint_sweep));
     }
 }

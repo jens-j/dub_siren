@@ -8,8 +8,8 @@ s = ''
 
 for i in range(1024):
 
-    x[i] = sin(i / 1024 * pi / 2)
-    # x[i] = sin(i / 1024 * pi / 2) + 0.5 * sin(3 * i / 1024 * pi / 2)
+    # x[i] = sin(i / 1024 * pi / 2)
+    x[i] = sin(i / 1024 * pi / 2) + 0.5 * sin(3 * i / 1024 * pi / 2)
 
 x = x / max(x)
 

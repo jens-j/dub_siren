@@ -32,7 +32,7 @@
 #define PRINT_MS                500
 #define ADC_RES                 1024
 #define ADC_RES_LOG2            10
-#define SAMPLE_RATE             44117UL
+#define SAMPLE_RATE             40451UL
 #define POT_DEAD_ZONE           3
 #define BTN_TIME                20 // ms
 
@@ -80,7 +80,7 @@
 
 #define PI                      3.141593
 
-enum waveform_t {SINE, SINE_H3, CHORD, SAW_UP, SAW_DOWN, SAW_WHOOP, CAPACITOR,
+enum waveform_t {SINE, SINE_H3, SAW_UP, SAW_DOWN, SAW_WHOOP, CAPACITOR,
                  SQUARE, PULSE, LASER_SAW, LASER_SQUARE, RANDOM};
 
 #endif

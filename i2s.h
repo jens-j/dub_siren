@@ -9,9 +9,9 @@ void setupI2S() {
 
     // setup the clock for the I2S peripheral
     GCLK->GENDIV.bit.ID = GLCK_I2S;             // select generator
-    GCLK->GENDIV.bit.DIV = 34;                  // clock divider 48 MHz / 34 / 16 / 2 = 44.117 kHz
+    GCLK->GENDIV.bit.DIV = 37;                  // clock divider 48 MHz / 37 / 16 / 2 = 40.541 kHz
     GCLK->GENCTRL.bit.ID = GLCK_I2S;            // select generator
-    GCLK->GENCTRL.bit.SRC = 7;                  // FDPLL48M 
+    GCLK->GENCTRL.bit.SRC = 7;                  // FDPLL48M
     GCLK->GENCTRL.bit.IDC = 1;                  // improve duty cycle
     GCLK->GENCTRL.bit.GENEN = 1;                // enable generator
     GCLK->CLKCTRL.bit.ID = 0x23;                // select clock GCLK_I2S_0
